@@ -58,9 +58,20 @@ app.use((req, res, next) => {
   }
 
   // Use PORT from environment variable (required for cloud deployment)
-  // Default to 5000 for local development
-  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 5000;
-  server.listen(port, () => {
+  // Default to 3000 for local development
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  server.listen(port, async () => {
     log(`serving on port ${port}`);
+    
+    // Start automation scheduler if enabled
+    if (process.env.AUTOMATION_SCHEDULER_ENABLED !== 'false') {
+      try {
+        const { startScheduler } = await import('./services/automation-scheduler-service');
+        startScheduler();
+        log('Automation scheduler started');
+      } catch (error: any) {
+        console.warn('Failed to start automation scheduler:', error.message);
+      }
+    }
   });
 })();

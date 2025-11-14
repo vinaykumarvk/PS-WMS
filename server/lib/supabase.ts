@@ -13,15 +13,31 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 
 let serverClient: SupabaseClient | null = null;
 
-export function getServerSupabase(): SupabaseClient {
+export function getServerSupabase(): SupabaseClient | null {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    return null;
+  }
+  
   if (!serverClient) {
-    serverClient = createClient((SUPABASE_URL as string) || '', (SUPABASE_KEY as string) || '', {
+    serverClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: { persistSession: false }
     });
   }
   return serverClient;
 }
 
+// Initialize only if credentials are available
+// This can be null if credentials are not provided
 export const supabaseServer = getServerSupabase();
+
+// Helper function to ensure Supabase is available, throws helpful error if not
+export function requireSupabase(): SupabaseClient {
+  if (!supabaseServer) {
+    throw new Error(
+      'Supabase is not configured. Please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY) in your .env file.'
+    );
+  }
+  return supabaseServer;
+}
 
 

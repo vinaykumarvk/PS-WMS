@@ -1,5 +1,7 @@
 import { QueryClient, QueryFunction, useQuery } from "@tanstack/react-query";
 import React from "react";
+import { apiCache, cacheKeys, cacheTTLs } from "./api-cache";
+import { measureAPICall, performanceMonitor } from "./performance-monitor";
 
 export function useApiQuery<T>(options: Parameters<typeof useQuery<T>>[0] & {
   queryParams?: Record<string, string>
@@ -44,15 +46,51 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const res = await fetch(url, {
-    method,
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
+  // Only cache GET requests
+  if (method === 'GET') {
+    const cached = apiCache.get<Response>(url);
+    if (cached) {
+      performanceMonitor.record(`api:cache-hit:${url}`, 0, { url, method });
+      // Return cached response as a new Response object
+      return new Response(JSON.stringify(cached), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
 
-  await throwIfResNotOk(res);
-  return res;
+  return measureAPICall(url, async () => {
+    const res = await fetch(url, {
+      method,
+      headers: data ? { "Content-Type": "application/json" } : {},
+      body: data ? JSON.stringify(data) : undefined,
+      credentials: "include",
+    });
+
+    await throwIfResNotOk(res);
+    
+    // Cache GET responses
+    if (method === 'GET' && res.ok) {
+      try {
+        const responseData = await res.clone().json();
+        // Determine cache TTL based on endpoint
+        let ttl = cacheTTLs.products; // default
+        if (url.includes('/products')) ttl = cacheTTLs.products;
+        else if (url.includes('/portfolio')) ttl = cacheTTLs.portfolio;
+        else if (url.includes('/holdings')) ttl = cacheTTLs.holdings;
+        else if (url.includes('/favorites')) ttl = cacheTTLs.favorites;
+        else if (url.includes('/recent-orders')) ttl = cacheTTLs.recentOrders;
+        else if (url.includes('/sip')) ttl = cacheTTLs.sipPlans;
+        
+        apiCache.set(url, responseData, ttl);
+      } catch (e) {
+        // If response is not JSON, don't cache
+        console.warn('Failed to cache non-JSON response:', url);
+      }
+    }
+    
+    return res;
+  });
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
@@ -61,16 +99,40 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey[0] as string, {
-      credentials: "include",
-    });
-
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
+    const url = queryKey[0] as string;
+    
+    // Check cache first
+    const cached = apiCache.get<T>(url);
+    if (cached) {
+      performanceMonitor.record(`query:cache-hit:${url}`, 0, { url });
+      return cached;
     }
 
-    await throwIfResNotOk(res);
-    return await res.json();
+    return measureAPICall(url, async () => {
+      const res = await fetch(url, {
+        credentials: "include",
+      });
+
+      if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+        return null;
+      }
+
+      await throwIfResNotOk(res);
+      const data = await res.json();
+      
+      // Cache the response
+      let ttl = cacheTTLs.products; // default
+      if (url.includes('/products')) ttl = cacheTTLs.products;
+      else if (url.includes('/portfolio')) ttl = cacheTTLs.portfolio;
+      else if (url.includes('/holdings')) ttl = cacheTTLs.holdings;
+      else if (url.includes('/favorites')) ttl = cacheTTLs.favorites;
+      else if (url.includes('/recent-orders')) ttl = cacheTTLs.recentOrders;
+      else if (url.includes('/sip')) ttl = cacheTTLs.sipPlans;
+      
+      apiCache.set(url, data, ttl);
+      
+      return data;
+    });
   };
 
 export const queryClient = new QueryClient({

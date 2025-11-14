@@ -7,8 +7,16 @@ import { eq, sql, and, gt, desc, or, inArray } from "drizzle-orm";
 import { clients, prospects, transactions, performanceIncentives, clientComplaints, products } from "@shared/schema";
 import communicationsRouter from "./communications";
 import portfolioReportRouter from "./portfolio-report";
+import suggestionsRouter from "./routes/suggestions";
+import analyticsRouter from "./routes/analytics";
+import webhooksRouter from "./routes/webhooks";
+import bulkOrdersRouter from "./routes/bulk-orders";
+import integrationsRouter from "./routes/integrations";
 import { supabaseServer } from "./lib/supabase";
 import { addClient, updateFinancialProfile, saveClientDraft, getClientDraft } from "./routes/clients";
+import * as goalRoutes from "./routes/goals";
+import * as automationRoutes from "./routes/automation";
+import { triggerWebhooks } from "./services/webhook-service";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import { z } from "zod";
@@ -95,12 +103,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Database health check endpoint
   app.get('/api/health', async (req: Request, res: Response) => {
     try {
-      // Simple database connectivity test
-      await withDatabaseRetry(async () => {
-        const result = await db.execute(sql`SELECT 1 as health_check`);
-        return result;
-      });
-      res.json({ status: 'healthy', database: 'connected' });
+      // Check if we have a Drizzle db connection
+      if (db && db.execute) {
+        // Use Drizzle for direct Postgres connection
+        await withDatabaseRetry(async () => {
+          const result = await db.execute(sql`SELECT 1 as health_check`);
+          return result;
+        });
+        res.json({ status: 'healthy', database: 'connected', type: 'drizzle' });
+      } else if (supabaseServer) {
+        // Use Supabase SDK for Supabase connection
+        const { data, error } = await supabaseServer.from('users').select('id').limit(1);
+        if (error) {
+          throw error;
+        }
+        res.json({ status: 'healthy', database: 'connected', type: 'supabase' });
+      } else {
+        res.json({ status: 'healthy', database: 'not_configured', message: 'Database not configured' });
+      }
     } catch (error) {
       console.error('Health check failed:', error);
       res.status(503).json({ status: 'unhealthy', database: 'disconnected', error: String(error) });
@@ -1124,6 +1144,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Internal server error" });
     }
   });
+  
+  // Goals routes
+  app.post("/api/goals", authMiddleware, goalRoutes.createGoal);
+  app.get("/api/goals", goalRoutes.getGoals);
+  app.get("/api/goals/:id", goalRoutes.getGoalById);
+  app.put("/api/goals/:id", authMiddleware, goalRoutes.updateGoal);
+  app.delete("/api/goals/:id", authMiddleware, goalRoutes.deleteGoal);
+  app.post("/api/goals/:id/allocate", authMiddleware, goalRoutes.allocateToGoal);
+  app.get("/api/goals/:id/progress", goalRoutes.getGoalProgress);
+  app.get("/api/goals/recommendations", goalRoutes.getGoalRecommendations);
+  
+  // Automation routes
+  app.post("/api/automation/auto-invest", authMiddleware, automationRoutes.createAutoInvestRule);
+  app.get("/api/automation/auto-invest", automationRoutes.getAutoInvestRules);
+  app.get("/api/automation/auto-invest/:id", automationRoutes.getAutoInvestRuleById);
+  app.put("/api/automation/auto-invest/:id", authMiddleware, automationRoutes.updateAutoInvestRule);
+  app.delete("/api/automation/auto-invest/:id", authMiddleware, automationRoutes.deleteAutoInvestRule);
+  
+  app.post("/api/automation/rebalancing", authMiddleware, automationRoutes.createRebalancingRule);
+  app.get("/api/automation/rebalancing", automationRoutes.getRebalancingRules);
+  app.get("/api/automation/rebalancing/:id", automationRoutes.getRebalancingRuleById);
+  app.post("/api/automation/rebalancing/:id/execute", authMiddleware, automationRoutes.executeRebalancing);
+  
+  app.post("/api/automation/trigger-orders", authMiddleware, automationRoutes.createTriggerOrder);
+  app.get("/api/automation/trigger-orders", automationRoutes.getTriggerOrders);
+  app.get("/api/automation/trigger-orders/:id", automationRoutes.getTriggerOrderById);
+  
+  app.post("/api/automation/notification-preferences", authMiddleware, automationRoutes.createNotificationPreference);
+  app.get("/api/automation/notification-preferences", automationRoutes.getNotificationPreferences);
+  app.put("/api/automation/notification-preferences/:id", authMiddleware, automationRoutes.updateNotificationPreference);
+  app.delete("/api/automation/notification-preferences/:id", authMiddleware, automationRoutes.deleteNotificationPreference);
+  app.get("/api/automation/notification-logs", automationRoutes.getNotificationLogs);
+  
+  app.get("/api/automation/execution-logs", automationRoutes.getAutomationExecutionLogs);
+  
+  // Automation scheduler control routes (admin/testing)
+  app.post("/api/automation/scheduler/execute", authMiddleware, automationRoutes.manualExecuteAutomation);
+  app.get("/api/automation/scheduler/status", automationRoutes.getSchedulerStatus);
   
   // Transaction routes
   app.get("/api/clients/:clientId/transactions", async (req, res) => {
@@ -5481,6 +5539,17 @@ startxref
         traceId,
       });
 
+      // Trigger webhook for order creation
+      triggerWebhooks(userId, 'order.created', {
+        orderId: order.id,
+        modelOrderId: order.modelOrderId,
+        clientId: order.clientId,
+        status: order.status,
+        submittedAt: order.submittedAt,
+      }).catch((error) => {
+        console.error('Failed to trigger webhook for order creation:', error);
+      });
+
       res.status(201).json({
         success: true,
         message: 'Order submitted successfully',
@@ -5549,6 +5618,17 @@ startxref
       // Use real Order Service
       const order = await updateOrderStatus(orderId, 'In Progress', userId);
 
+      // Trigger webhook for order update
+      triggerWebhooks(userId, 'order.updated', {
+        orderId: order.id,
+        modelOrderId: order.modelOrderId,
+        status: order.status,
+        authorizedAt: order.authorizedAt,
+        authorizedBy: order.authorizedBy,
+      }).catch((error) => {
+        console.error('Failed to trigger webhook for order authorization:', error);
+      });
+
       res.json({ 
         success: true, 
         message: 'Order authorized successfully',
@@ -5582,6 +5662,17 @@ startxref
       // Use real Order Service
       const order = await updateOrderStatus(orderId, 'Failed', userId, reason);
 
+      // Trigger webhook for order failure
+      triggerWebhooks(userId, 'order.failed', {
+        orderId: order.id,
+        modelOrderId: order.modelOrderId,
+        status: order.status,
+        rejectedAt: order.rejectedAt,
+        rejectedReason: order.rejectedReason,
+      }).catch((error) => {
+        console.error('Failed to trigger webhook for order rejection:', error);
+      });
+
       res.json({ 
         success: true, 
         message: 'Order rejected successfully',
@@ -5597,8 +5688,984 @@ startxref
     }
   });
 
+  // ============================================
+  // MODULE 1: ORDER CONFIRMATION & RECEIPTS
+  // ============================================
+  
+  // Import services
+  const { getOrderConfirmation, getOrderTimeline } = await import('./services/order-confirmation-service');
+  const { generateReceiptPDF } = await import('./services/pdf-service');
+  const { sendOrderConfirmationEmail } = await import('./services/email-service');
+
+  // Get order confirmation data
+  app.get('/api/order-management/orders/:id/confirmation', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const orderId = parseInt(req.params.id);
+      const userId = (req.session as any).userId;
+
+      const confirmationData = await getOrderConfirmation(orderId, userId);
+
+      if (!confirmationData) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found',
+        });
+      }
+
+      res.json({
+        success: true,
+        data: confirmationData,
+      });
+    } catch (error: any) {
+      console.error('Get order confirmation error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get order confirmation',
+        error: error.message,
+      });
+    }
+  });
+
+  // Generate PDF receipt
+  app.post('/api/order-management/orders/:id/generate-receipt', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const orderId = parseInt(req.params.id);
+      const userId = (req.session as any).userId;
+
+      const confirmationData = await getOrderConfirmation(orderId, userId);
+
+      if (!confirmationData) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found',
+        });
+      }
+
+      const pdfBuffer = await generateReceiptPDF({
+        order: confirmationData,
+        clientName: confirmationData.clientName,
+        clientEmail: confirmationData.clientEmail,
+        clientAddress: confirmationData.clientAddress,
+      });
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=order-receipt-${confirmationData.modelOrderId}.pdf`);
+      res.send(pdfBuffer);
+    } catch (error: any) {
+      console.error('Generate receipt error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate receipt',
+        error: error.message,
+      });
+    }
+  });
+
+  // Send confirmation email
+  app.post('/api/order-management/orders/:id/send-email', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const orderId = parseInt(req.params.id);
+      const userId = (req.session as any).userId;
+
+      const confirmationData = await getOrderConfirmation(orderId, userId);
+
+      if (!confirmationData) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found',
+        });
+      }
+
+      // Get email from transaction mode or client data
+      const orderFormData = confirmationData.orderFormData || (confirmationData as any).orderFormData;
+      const email = orderFormData?.transactionMode?.email || confirmationData.clientEmail;
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email address not found',
+          errors: ['No email address available for this order'],
+        });
+      }
+
+      // Generate PDF receipt for attachment
+      let receiptPdf: Buffer | undefined;
+      try {
+        receiptPdf = await generateReceiptPDF({
+          order: confirmationData,
+          clientName: confirmationData.clientName,
+          clientEmail: confirmationData.clientEmail,
+          clientAddress: confirmationData.clientAddress,
+        });
+      } catch (pdfError) {
+        console.warn('Failed to generate PDF for email attachment:', pdfError);
+        // Continue without PDF attachment
+      }
+
+      await sendOrderConfirmationEmail({
+        to: email,
+        order: confirmationData,
+        clientName: confirmationData.clientName,
+        receiptPdf,
+      });
+
+      res.json({
+        success: true,
+        message: 'Email sent successfully',
+      });
+    } catch (error: any) {
+      console.error('Send email error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send email',
+        error: error.message,
+      });
+    }
+  });
+
+  // Get order timeline
+  app.get('/api/order-management/orders/:id/timeline', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const orderId = parseInt(req.params.id);
+
+      const timeline = await getOrderTimeline(orderId);
+
+      res.json({
+        success: true,
+        data: timeline,
+      });
+    } catch (error: any) {
+      console.error('Get order timeline error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get order timeline',
+        error: error.message,
+      });
+    }
+  });
+
   app.use(communicationsRouter);
   app.use(portfolioReportRouter);
+  app.use('/api', suggestionsRouter);
+  app.use('/api/analytics', analyticsRouter);
+  app.use('/api/webhooks', webhooksRouter);
+  app.use('/api/bulk-orders', bulkOrdersRouter);
+  app.use('/api/integrations', integrationsRouter);
+
+  // Serve OpenAPI specification
+  app.get('/api/openapi.yaml', async (req: Request, res: Response) => {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const openApiPath = path.join(__dirname, '../api/openapi.yaml');
+      const openApiContent = fs.readFileSync(openApiPath, 'utf-8');
+      res.setHeader('Content-Type', 'application/x-yaml');
+      res.send(openApiContent);
+    } catch (error: any) {
+      console.error('Error serving OpenAPI spec:', error);
+      res.status(500).json({ message: 'Failed to load API specification' });
+    }
+  });
+
+  // ============================================
+  // QUICK ORDER API ENDPOINTS (Module A)
+  // ============================================
+  
+  // Import Quick Order Service
+  const { getFavorites, addFavorite, removeFavorite, getRecentOrders } = await import('./services/quick-order-service');
+  
+  // Get favorite schemes
+  app.get('/api/quick-order/favorites', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any).userId;
+      
+      // Get favorites from database
+      const favorites = await getFavorites(userId);
+      
+      // Fetch product details for each favorite
+      const favoritesWithProducts = await Promise.all(
+        favorites.map(async (favorite) => {
+          try {
+            const product = await getProducts();
+            const productDetails = product.find((p: any) => p.id === favorite.productId);
+            
+            return {
+              id: favorite.id,
+              productId: favorite.productId,
+              schemeName: productDetails?.schemeName || 'Unknown Scheme',
+              schemeCode: productDetails?.schemeCode,
+              addedAt: favorite.addedAt.toISOString(),
+              product: productDetails,
+            };
+          } catch (error) {
+            // If product fetch fails, return favorite without product details
+            return {
+              id: favorite.id,
+              productId: favorite.productId,
+              schemeName: 'Unknown Scheme',
+              addedAt: favorite.addedAt.toISOString(),
+            };
+          }
+        })
+      );
+
+      res.json(favoritesWithProducts);
+    } catch (error: any) {
+      console.error('Get favorites error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch favorites',
+        error: error.message,
+      });
+    }
+  });
+
+  // Add scheme to favorites
+  app.post('/api/quick-order/favorites', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any).userId;
+      const { productId } = req.body;
+
+      if (!productId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Product ID is required',
+          errors: ['productId is required'],
+        });
+      }
+
+      // Verify product exists
+      const productList = await getProducts();
+      const product = productList.find((p: any) => p.id === productId);
+      
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found',
+          errors: ['Product not found'],
+        });
+      }
+
+      // Add to favorites
+      const favorite = await addFavorite(userId, productId);
+
+      res.status(201).json({
+        success: true,
+        message: 'Added to favorites',
+        data: {
+          id: favorite.id,
+          productId: favorite.productId,
+          schemeName: product.schemeName,
+          schemeCode: product.schemeCode,
+          addedAt: favorite.addedAt.toISOString(),
+        },
+      });
+    } catch (error: any) {
+      console.error('Add favorite error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to add favorite',
+        error: error.message,
+      });
+    }
+  });
+
+  // Remove scheme from favorites
+  app.delete('/api/quick-order/favorites/:id', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any).userId;
+      const favoriteId = req.params.id;
+
+      // Remove favorite (service verifies ownership)
+      await removeFavorite(userId, favoriteId);
+
+      res.json({
+        success: true,
+        message: 'Removed from favorites',
+      });
+    } catch (error: any) {
+      console.error('Remove favorite error:', error);
+      const statusCode = error.message.includes('not found') ? 404 : 500;
+      res.status(statusCode).json({
+        success: false,
+        message: 'Failed to remove favorite',
+        error: error.message,
+      });
+    }
+  });
+
+  // Get recent orders
+  app.get('/api/quick-order/recent', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any).userId;
+      const limit = parseInt(req.query.limit as string) || 5;
+
+      // Get recent orders from database
+      // Note: Currently returns empty array until orders table is created
+      // In production, this will query the orders table
+      const recentOrders = await getRecentOrders(userId, limit);
+
+      // If no orders from database, return mock data for development
+      if (recentOrders.length === 0) {
+        const mockRecentOrders = [
+          {
+            id: 'recent-1',
+            orderId: 101,
+            modelOrderId: 'ORD-2024-001',
+            productId: 1,
+            schemeName: 'HDFC Equity Fund',
+            transactionType: 'Purchase',
+            amount: 10000,
+            orderDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+            status: 'Settled',
+          },
+          {
+            id: 'recent-2',
+            orderId: 102,
+            modelOrderId: 'ORD-2024-002',
+            productId: 2,
+            schemeName: 'ICICI Balanced Fund',
+            transactionType: 'Purchase',
+            amount: 25000,
+            orderDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+            status: 'Executed',
+          },
+          {
+            id: 'recent-3',
+            orderId: 103,
+            modelOrderId: 'ORD-2024-003',
+            productId: 3,
+            schemeName: 'SBI Debt Fund',
+            transactionType: 'Purchase',
+            amount: 5000,
+            orderDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+            status: 'Settled',
+          },
+        ].slice(0, limit);
+
+        res.json(mockRecentOrders);
+      } else {
+        res.json(recentOrders);
+      }
+    } catch (error: any) {
+      console.error('Get recent orders error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch recent orders',
+        error: error.message,
+      });
+    }
+  });
+
+  // Place quick order
+  app.post('/api/quick-order/place', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any).userId;
+      const { productId, amount, transactionType = 'Purchase', orderType, sourceSchemeId } = req.body;
+
+      // Validation
+      if (!productId || !amount) {
+        return res.status(400).json({
+          success: false,
+          message: 'Product ID and amount are required',
+          errors: ['productId and amount are required'],
+        });
+      }
+
+      if (amount <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Amount must be greater than 0',
+          errors: ['Amount must be greater than 0'],
+        });
+      }
+
+      // Fetch product details
+      const products = await getProducts();
+      const product = products.find((p: any) => p.id === productId);
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found',
+          errors: ['Product not found'],
+        });
+      }
+
+      // Validate amount against product limits
+      if (amount < product.minInvestment) {
+        return res.status(400).json({
+          success: false,
+          message: 'Amount below minimum investment',
+          errors: [`Minimum investment is ₹${product.minInvestment.toLocaleString()}`],
+        });
+      }
+
+      if (product.maxInvestment && amount > product.maxInvestment) {
+        return res.status(400).json({
+          success: false,
+          message: 'Amount above maximum investment',
+          errors: [`Maximum investment is ₹${product.maxInvestment.toLocaleString()}`],
+        });
+      }
+
+      // Calculate units if NAV is available
+      const units = product.nav ? amount / product.nav : undefined;
+
+      // Create cart item
+      const cartItem = {
+        id: `${productId}-${Date.now()}`,
+        productId,
+        schemeName: product.schemeName,
+        transactionType,
+        amount,
+        units,
+        nav: product.nav,
+        orderType: orderType || 'Additional Purchase',
+        sourceSchemeId,
+      };
+
+      res.json({
+        success: true,
+        message: 'Order added to cart',
+        data: {
+          cartItem,
+        },
+      });
+    } catch (error: any) {
+      console.error('Place quick order error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to place quick order',
+        error: error.message,
+        errors: [error.message],
+      });
+    }
+  });
+
+  // ============================================
+  // REDEMPTION API ENDPOINTS (Module E: Instant Redemption Features)
+  // ============================================
+  
+  const { redemptionService } = await import('./services/redemption-service');
+
+  // Calculate redemption amount
+  app.post('/api/redemption/calculate', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const result = await redemptionService.calculateRedemption(req.body);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Calculate redemption error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to calculate redemption',
+        error: error.message,
+      });
+    }
+  });
+
+  // Execute redemption
+  app.post('/api/redemption/execute', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const result = await redemptionService.executeRedemption(req.body);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Execute redemption error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to execute redemption',
+        error: error.message,
+      });
+    }
+  });
+
+  // Execute instant redemption
+  app.post('/api/redemption/instant', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const result = await redemptionService.executeInstantRedemption(req.body);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Execute instant redemption error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to execute instant redemption',
+        error: error.message,
+      });
+    }
+  });
+
+  // Check instant redemption eligibility
+  app.get('/api/redemption/eligibility', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const schemeId = parseInt(req.query.schemeId as string);
+      const amount = parseFloat(req.query.amount as string);
+
+      if (!schemeId || isNaN(schemeId) || !amount || isNaN(amount)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Scheme ID and amount are required',
+        });
+      }
+
+      const result = await redemptionService.checkInstantRedemptionEligibility({
+        schemeId,
+        amount,
+      });
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Check instant redemption eligibility error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to check eligibility',
+        error: error.message,
+      });
+    }
+  });
+
+  // Get redemption history
+  app.get('/api/redemption/history', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any).userId;
+      const clientId = req.query.clientId ? parseInt(req.query.clientId as string) : userId;
+      
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+        });
+      }
+
+      const filters: any = {};
+      if (req.query.status) filters.status = req.query.status;
+      if (req.query.startDate) filters.startDate = req.query.startDate;
+      if (req.query.endDate) filters.endDate = req.query.endDate;
+      if (req.query.schemeId) filters.schemeId = parseInt(req.query.schemeId as string);
+
+      const result = await redemptionService.getRedemptionHistory(clientId, filters);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get redemption history error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch redemption history',
+        error: error.message,
+      });
+    }
+  });
+
+  // ============================================
+  // PORTFOLIO-AWARE ORDERING API ENDPOINTS (Module B)
+  // ============================================
+  
+  const {
+    getPortfolio,
+    getImpactPreview,
+    getAllocationGaps,
+    getRebalancingSuggestions,
+    getHoldings,
+  } = await import('./services/portfolio-analysis-service');
+
+  // Get current portfolio allocation
+  app.get('/api/portfolio/current-allocation', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.query.clientId as string);
+      const includeHoldings = req.query.includeHoldings === 'true';
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const result = await getPortfolio(clientId, includeHoldings);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get current allocation error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch portfolio allocation',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // Get portfolio impact preview
+  app.post('/api/portfolio/impact-preview', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.body.clientId);
+      const order = req.body.order; // Array of CartItem
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      if (!order || !Array.isArray(order) || order.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Order items are required',
+          errors: ['Order must be a non-empty array'],
+        });
+      }
+
+      const result = await getImpactPreview(clientId, order);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get impact preview error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to calculate impact preview',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // Get allocation gaps
+  app.get('/api/portfolio/allocation-gaps', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.query.clientId as string);
+      const targetAllocation = req.query.targetAllocation 
+        ? JSON.parse(req.query.targetAllocation as string)
+        : undefined;
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const result = await getAllocationGaps(clientId, targetAllocation);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get allocation gaps error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to calculate allocation gaps',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // Get rebalancing suggestions
+  app.get('/api/portfolio/rebalancing-suggestions', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.query.clientId as string);
+      const targetAllocation = req.query.targetAllocation 
+        ? JSON.parse(req.query.targetAllocation as string)
+        : undefined;
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const result = await getRebalancingSuggestions(clientId, targetAllocation);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get rebalancing suggestions error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate rebalancing suggestions',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // Get client holdings
+  app.get('/api/portfolio/holdings', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.query.clientId as string);
+      const schemeId = req.query.schemeId 
+        ? parseInt(req.query.schemeId as string)
+        : undefined;
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const result = await getHoldings(clientId, schemeId);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get holdings error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch holdings',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // ============================================
+  // SWITCH API ENDPOINTS (Module D)
+  // ============================================
+  
+  const {
+    calculateSwitch,
+    executePartialSwitch,
+    executeMultiSchemeSwitch,
+    getSwitchHistory,
+    getSwitchRecommendations,
+  } = await import('./services/switch-service');
+
+  // Calculate switch tax implications
+  app.post('/api/switch/calculate', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { sourceSchemeId, targetSchemeId, amount, units } = req.body;
+
+      if (!sourceSchemeId || !targetSchemeId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Source and target scheme IDs are required',
+          errors: ['Source and target scheme IDs are required'],
+        });
+      }
+
+      if (!amount && !units) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either amount or units must be provided',
+          errors: ['Either amount or units must be provided'],
+        });
+      }
+
+      const result = await calculateSwitch({
+        sourceSchemeId,
+        targetSchemeId,
+        amount,
+        units,
+      });
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Calculate switch error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to calculate switch',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // Execute partial switch
+  app.post('/api/switch/partial', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { sourceSchemeId, targetSchemeId, amount, units } = req.body;
+
+      if (!sourceSchemeId || !targetSchemeId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Source and target scheme IDs are required',
+          errors: ['Source and target scheme IDs are required'],
+        });
+      }
+
+      if (!amount && !units) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either amount or units must be provided',
+          errors: ['Either amount or units must be provided'],
+        });
+      }
+
+      const result = await executePartialSwitch({
+        sourceSchemeId,
+        targetSchemeId,
+        amount,
+        units,
+      });
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Execute partial switch error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to execute partial switch',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // Execute multi-scheme switch
+  app.post('/api/switch/multi-scheme', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { sourceSchemeId, targets } = req.body;
+
+      if (!sourceSchemeId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Source scheme ID is required',
+          errors: ['Source scheme ID is required'],
+        });
+      }
+
+      if (!targets || !Array.isArray(targets) || targets.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'At least one target scheme is required',
+          errors: ['At least one target scheme is required'],
+        });
+      }
+
+      const result = await executeMultiSchemeSwitch({
+        sourceSchemeId,
+        targets,
+      });
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Execute multi-scheme switch error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to execute multi-scheme switch',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // Get switch history
+  app.get('/api/switch/history', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.query.clientId as string);
+      const status = req.query.status as string | undefined;
+      const type = req.query.type as string | undefined;
+      const dateFrom = req.query.dateFrom as string | undefined;
+      const dateTo = req.query.dateTo as string | undefined;
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const result = await getSwitchHistory(clientId, {
+        status,
+        type,
+        dateFrom,
+        dateTo,
+      });
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get switch history error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch switch history',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  // Get switch recommendations
+  app.get('/api/switch/recommendations', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.query.clientId as string);
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const result = await getSwitchRecommendations(clientId);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get switch recommendations error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch switch recommendations',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
 
   // ============================================
   // SYSTEMATIC PLANS API ENDPOINTS (Phase 3)
@@ -5615,6 +6682,33 @@ startxref
     cancelPlan,
     getPlansScheduledForDate,
   } = await import('./services/systematic-plans-service');
+  
+  const {
+    createSIP,
+    getSIPById,
+    getSIPsByClient,
+    pauseSIP,
+    resumeSIP,
+    modifySIP,
+    cancelSIP,
+    calculateSIP,
+    getSIPCalendar,
+    getSIPPerformance,
+  } = await import('./services/sip-service');
+  
+  const {
+    processScheduledSIPs,
+    retryFailedSIPExecutions,
+    getSIPsScheduledForDate,
+    getSIPExecutionLogs,
+    getAllSIPExecutionLogs,
+  } = await import('./services/sip-scheduler-service');
+  
+  const {
+    getNAV,
+    getNAVData,
+    getBulkNAV,
+  } = await import('./services/nav-service');
 
   // Create SIP Plan
   app.post('/api/systematic-plans/sip', authMiddleware, async (req: Request, res: Response) => {
@@ -5834,6 +6928,640 @@ startxref
     }
   });
 
+  // ============================================
+  // SIP Builder & Manager Endpoints
+  // ============================================
+
+  // Create SIP plan
+  app.post('/api/sip/create', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any).userId;
+      const clientId = req.body.clientId || userId;
+      const planData = req.body;
+
+      if (!planData.schemeId || !planData.amount || !planData.startDate || !planData.frequency) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields',
+          errors: ['schemeId, amount, startDate, and frequency are required'],
+        });
+      }
+
+      const plan = await createSIP(clientId, planData);
+
+      res.status(201).json({
+        success: true,
+        message: 'SIP plan created successfully',
+        data: plan,
+      });
+    } catch (error: any) {
+      console.error('Create SIP error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to create SIP',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Get SIP plan by ID
+  app.get('/api/sip/:id', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const planId = req.params.id;
+      const plan = await getSIPById(planId);
+
+      if (!plan) {
+        return res.status(404).json({
+          success: false,
+          message: 'SIP plan not found',
+        });
+      }
+
+      res.json({
+        success: true,
+        data: plan,
+      });
+    } catch (error: any) {
+      console.error('Get SIP error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch SIP plan',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Get SIP plans for a client
+  app.get('/api/sip', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = req.query.clientId ? parseInt(req.query.clientId as string) : undefined;
+      const status = req.query.status as string | undefined;
+
+      if (!clientId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const plans = await getSIPsByClient(clientId, status as any);
+
+      res.json({
+        success: true,
+        data: plans,
+        count: plans.length,
+      });
+    } catch (error: any) {
+      console.error('List SIPs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch SIP plans',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Pause SIP plan
+  app.put('/api/sip/:id/pause', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const planId = req.params.id;
+      const { pauseUntil } = req.body;
+
+      const plan = await pauseSIP(planId, pauseUntil);
+
+      res.json({
+        success: true,
+        message: 'SIP plan paused successfully',
+        data: plan,
+      });
+    } catch (error: any) {
+      console.error('Pause SIP error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to pause SIP',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Resume SIP plan
+  app.put('/api/sip/:id/resume', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const planId = req.params.id;
+      const plan = await resumeSIP(planId);
+
+      res.json({
+        success: true,
+        message: 'SIP plan resumed successfully',
+        data: plan,
+      });
+    } catch (error: any) {
+      console.error('Resume SIP error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to resume SIP',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Modify SIP plan
+  app.put('/api/sip/:id/modify', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const planId = req.params.id;
+      const updates = req.body;
+
+      const plan = await modifySIP(planId, updates);
+
+      res.json({
+        success: true,
+        message: 'SIP plan modified successfully',
+        data: plan,
+      });
+    } catch (error: any) {
+      console.error('Modify SIP error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to modify SIP',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Cancel SIP plan
+  app.put('/api/sip/:id/cancel', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const planId = req.params.id;
+      const { reason } = req.body;
+
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cancellation reason is required',
+          errors: ['Reason is required'],
+        });
+      }
+
+      const plan = await cancelSIP(planId, reason);
+
+      res.json({
+        success: true,
+        message: 'SIP plan cancelled successfully',
+        data: plan,
+      });
+    } catch (error: any) {
+      console.error('Cancel SIP error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to cancel SIP',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Calculate SIP returns
+  app.post('/api/sip/calculator', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const input = req.body;
+
+      if (!input.amount || !input.frequency || !input.duration || !input.expectedReturn) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields',
+          errors: ['amount, frequency, duration, and expectedReturn are required'],
+        });
+      }
+
+      const result = await calculateSIP(input);
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error: any) {
+      console.error('Calculate SIP error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to calculate SIP',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Get SIP calendar events
+  app.get('/api/sip/calendar', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = req.query.clientId ? parseInt(req.query.clientId as string) : undefined;
+      const startDate = req.query.startDate as string;
+      const endDate = req.query.endDate as string;
+
+      if (!clientId || !startDate || !endDate) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required parameters',
+          errors: ['clientId, startDate, and endDate are required'],
+        });
+      }
+
+      const events = await getSIPCalendar(clientId, startDate, endDate);
+
+      res.json({
+        success: true,
+        data: events,
+        count: events.length,
+      });
+    } catch (error: any) {
+      console.error('Get SIP calendar error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch SIP calendar',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Get SIP performance
+  app.get('/api/sip/:id/performance', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const planId = req.params.id;
+      const performance = await getSIPPerformance(planId);
+
+      res.json({
+        success: true,
+        data: performance,
+      });
+    } catch (error: any) {
+      console.error('Get SIP performance error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch SIP performance',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // ============================================
+  // SIP Scheduler & Execution Endpoints
+  // ============================================
+
+  // Get SIPs scheduled for execution on a date
+  app.get('/api/sip/scheduler/scheduled', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const date = req.query.date as string || new Date().toISOString().split('T')[0];
+      const plans = await getSIPsScheduledForDate(date);
+
+      res.json({
+        success: true,
+        data: plans,
+        count: plans.length,
+        date,
+      });
+    } catch (error: any) {
+      console.error('Get scheduled SIPs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch scheduled SIPs',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Process scheduled SIPs (manual trigger for testing/admin)
+  app.post('/api/sip/scheduler/process', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const date = req.body.date as string | undefined;
+      const logs = await processScheduledSIPs(date);
+
+      res.json({
+        success: true,
+        message: `Processed ${logs.length} SIP executions`,
+        data: logs,
+        count: logs.length,
+      });
+    } catch (error: any) {
+      console.error('Process scheduled SIPs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process scheduled SIPs',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Retry failed SIP executions
+  app.post('/api/sip/scheduler/retry', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const logs = await retryFailedSIPExecutions();
+
+      res.json({
+        success: true,
+        message: `Retried ${logs.length} failed SIP executions`,
+        data: logs,
+        count: logs.length,
+      });
+    } catch (error: any) {
+      console.error('Retry failed SIPs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to retry failed SIPs',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Get execution logs for a SIP plan
+  app.get('/api/sip/:id/execution-logs', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const planId = req.params.id;
+      const logs = getSIPExecutionLogs(planId);
+
+      res.json({
+        success: true,
+        data: logs,
+        count: logs.length,
+      });
+    } catch (error: any) {
+      console.error('Get SIP execution logs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch execution logs',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Get all execution logs (with optional date range)
+  app.get('/api/sip/execution-logs', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const startDate = req.query.startDate as string | undefined;
+      const endDate = req.query.endDate as string | undefined;
+      const logs = getAllSIPExecutionLogs(startDate, endDate);
+
+      res.json({
+        success: true,
+        data: logs,
+        count: logs.length,
+      });
+    } catch (error: any) {
+      console.error('Get all execution logs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch execution logs',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // ============================================
+  // NAV Service Endpoints
+  // ============================================
+
+  // Get NAV for a scheme
+  app.get('/api/nav/:schemeId', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const schemeId = parseInt(req.params.schemeId);
+      const date = req.query.date as string | undefined;
+
+      if (isNaN(schemeId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid scheme ID',
+          errors: ['Scheme ID must be a number'],
+        });
+      }
+
+      const nav = await getNAV(schemeId, date);
+
+      res.json({
+        success: true,
+        data: {
+          schemeId,
+          nav,
+          date: date || new Date().toISOString().split('T')[0],
+        },
+      });
+    } catch (error: any) {
+      console.error('Get NAV error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch NAV',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Get NAV data with change information
+  app.get('/api/nav/:schemeId/data', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const schemeId = parseInt(req.params.schemeId);
+      const date = req.query.date as string | undefined;
+
+      if (isNaN(schemeId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid scheme ID',
+          errors: ['Scheme ID must be a number'],
+        });
+      }
+
+      const navData = await getNAVData(schemeId, date);
+
+      res.json({
+        success: true,
+        data: navData,
+      });
+    } catch (error: any) {
+      console.error('Get NAV data error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch NAV data',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Get bulk NAV for multiple schemes
+  app.post('/api/nav/bulk', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { schemeIds, date } = req.body;
+
+      if (!Array.isArray(schemeIds) || schemeIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid request',
+          errors: ['schemeIds must be a non-empty array'],
+        });
+      }
+
+      const navMap = await getBulkNAV(schemeIds, date);
+      const navArray = Array.from(navMap.entries()).map(([schemeId, nav]) => ({
+        schemeId,
+        nav,
+      }));
+
+      res.json({
+        success: true,
+        data: navArray,
+        count: navArray.length,
+      });
+    } catch (error: any) {
+      console.error('Get bulk NAV error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch bulk NAV',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // ============================================
+  // Bulk SIP Operations
+  // ============================================
+
+  // Bulk pause SIPs
+  app.post('/api/sip/bulk/pause', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { planIds, pauseUntil } = req.body;
+
+      if (!Array.isArray(planIds) || planIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid request',
+          errors: ['planIds must be a non-empty array'],
+        });
+      }
+
+      const results = await Promise.allSettled(
+        planIds.map((planId: string) => pauseSIP(planId, pauseUntil))
+      );
+
+      const successful = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+
+      res.json({
+        success: true,
+        message: `Paused ${successful} SIPs, ${failed} failed`,
+        data: {
+          total: planIds.length,
+          successful,
+          failed,
+          results: results.map((r, i) => ({
+            planId: planIds[i],
+            status: r.status,
+            data: r.status === 'fulfilled' ? r.value : null,
+            error: r.status === 'rejected' ? r.reason.message : null,
+          })),
+        },
+      });
+    } catch (error: any) {
+      console.error('Bulk pause SIPs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk pause SIPs',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Bulk resume SIPs
+  app.post('/api/sip/bulk/resume', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { planIds } = req.body;
+
+      if (!Array.isArray(planIds) || planIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid request',
+          errors: ['planIds must be a non-empty array'],
+        });
+      }
+
+      const results = await Promise.allSettled(
+        planIds.map((planId: string) => resumeSIP(planId))
+      );
+
+      const successful = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+
+      res.json({
+        success: true,
+        message: `Resumed ${successful} SIPs, ${failed} failed`,
+        data: {
+          total: planIds.length,
+          successful,
+          failed,
+          results: results.map((r, i) => ({
+            planId: planIds[i],
+            status: r.status,
+            data: r.status === 'fulfilled' ? r.value : null,
+            error: r.status === 'rejected' ? r.reason.message : null,
+          })),
+        },
+      });
+    } catch (error: any) {
+      console.error('Bulk resume SIPs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk resume SIPs',
+        errors: [error.message],
+      });
+    }
+  });
+
+  // Bulk cancel SIPs
+  app.post('/api/sip/bulk/cancel', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { planIds, reason } = req.body;
+
+      if (!Array.isArray(planIds) || planIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid request',
+          errors: ['planIds must be a non-empty array'],
+        });
+      }
+
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cancellation reason is required',
+          errors: ['Reason is required'],
+        });
+      }
+
+      const results = await Promise.allSettled(
+        planIds.map((planId: string) => cancelSIP(planId, reason))
+      );
+
+      const successful = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+
+      res.json({
+        success: true,
+        message: `Cancelled ${successful} SIPs, ${failed} failed`,
+        data: {
+          total: planIds.length,
+          successful,
+          failed,
+          results: results.map((r, i) => ({
+            planId: planIds[i],
+            status: r.status,
+            data: r.status === 'fulfilled' ? r.value : null,
+            error: r.status === 'rejected' ? r.reason.message : null,
+          })),
+        },
+      });
+    } catch (error: any) {
+      console.error('Bulk cancel SIPs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk cancel SIPs',
+        errors: [error.message],
+      });
+    }
+  });
+
   // Operations Console - Get plans by status
   app.get('/api/operations/systematic-plans', authMiddleware, async (req: Request, res: Response) => {
     try {
@@ -5883,6 +7611,176 @@ startxref
       res.status(500).json({
         success: false,
         message: 'Failed to fetch scheduled plans',
+        error: error.message,
+      });
+    }
+  });
+
+  // Help Center Routes
+  // Get FAQs
+  app.get('/api/help/faqs', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      // In a real implementation, this would fetch from database
+      // For now, return static FAQs
+      const faqs = [
+        {
+          id: '1',
+          question: 'How do I add a new client?',
+          answer: 'To add a new client, navigate to the Clients page and click the "Add Client" button. You\'ll be guided through a step-by-step process to enter personal information, financial profile, and risk assessment.',
+          category: 'Clients',
+          tags: ['clients', 'add', 'onboarding'],
+        },
+        {
+          id: '2',
+          question: 'How do I place an order?',
+          answer: 'Go to Order Management from the sidebar. You can use Quick Order for simple transactions or build a complex order with multiple products. Add products to your cart, review the details, and submit.',
+          category: 'Orders',
+          tags: ['orders', 'quick order', 'cart'],
+        },
+        {
+          id: '3',
+          question: 'What is risk profiling?',
+          answer: 'Risk profiling helps determine a client\'s risk tolerance through a questionnaire. The system calculates a risk score and assigns a risk category (Conservative, Moderate, Aggressive, etc.) which guides portfolio recommendations.',
+          category: 'Risk Profiling',
+          tags: ['risk', 'profiling', 'questionnaire'],
+        },
+        {
+          id: '4',
+          question: 'How do I view a client\'s portfolio?',
+          answer: 'Navigate to the Clients page, click on a client card, and then select the Portfolio tab. You\'ll see asset allocation, holdings, performance charts, and other portfolio details.',
+          category: 'Portfolio',
+          tags: ['portfolio', 'holdings', 'performance'],
+        },
+        {
+          id: '5',
+          question: 'Can I schedule appointments?',
+          answer: 'Yes! Go to the Calendar page or navigate to a client\'s detail page and select the Appointments tab. You can create, edit, and manage appointments with your clients.',
+          category: 'Calendar',
+          tags: ['calendar', 'appointments', 'schedule'],
+        },
+      ];
+
+      res.json({
+        success: true,
+        data: faqs,
+        count: faqs.length,
+      });
+    } catch (error: any) {
+      console.error('Help - get FAQs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch FAQs',
+        error: error.message,
+      });
+    }
+  });
+
+  // Get video tutorials
+  app.get('/api/help/tutorials', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const tutorials = [
+        {
+          id: '1',
+          title: 'Getting Started with WealthRM',
+          description: 'Learn the basics of navigating and using WealthRM platform',
+          videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+          duration: '5:30',
+          category: 'Getting Started',
+          tags: ['basics', 'navigation', 'overview'],
+        },
+        {
+          id: '2',
+          title: 'Adding and Managing Clients',
+          description: 'Step-by-step guide to adding new clients and managing client information',
+          videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+          duration: '8:15',
+          category: 'Clients',
+          tags: ['clients', 'onboarding', 'management'],
+        },
+        {
+          id: '3',
+          title: 'Placing Orders',
+          description: 'How to create and submit investment orders for your clients',
+          videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+          duration: '6:45',
+          category: 'Orders',
+          tags: ['orders', 'quick order', 'cart'],
+        },
+      ];
+
+      res.json({
+        success: true,
+        data: tutorials,
+        count: tutorials.length,
+      });
+    } catch (error: any) {
+      console.error('Help - get tutorials error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch tutorials',
+        error: error.message,
+      });
+    }
+  });
+
+  // Get contextual help for a page/route
+  app.get('/api/help/contextual/:context', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { context } = req.params;
+      
+      const helpContent: Record<string, any> = {
+        dashboard: {
+          title: 'Dashboard Overview',
+          description: 'Your dashboard provides a comprehensive view of your business metrics, recent clients, and quick actions.',
+          tips: [
+            'Use quick actions to perform common tasks',
+            'Check business metrics regularly to track performance',
+            'Review recent clients to stay on top of activity',
+          ],
+          links: [
+            { label: 'View Clients', href: '/clients' },
+            { label: 'Order Management', href: '/order-management' },
+          ],
+        },
+        clients: {
+          title: 'Client Management',
+          description: 'Manage all your clients from this page. Add new clients, view details, and track their portfolios.',
+          tips: [
+            'Use search to quickly find clients',
+            'Click on a client card to view full details',
+            'Use filters to organize your client list',
+          ],
+          links: [
+            { label: 'Add New Client', href: '/clients/add' },
+            { label: 'Dashboard', href: '/' },
+          ],
+        },
+        'order-management': {
+          title: 'Order Management',
+          description: 'Create and manage investment orders for your clients. Place quick orders or build complex portfolios.',
+          tips: [
+            'Use quick order for simple transactions',
+            'Review your cart before submitting',
+            'Check portfolio impact before placing orders',
+          ],
+          links: [
+            { label: 'View Clients', href: '/clients' },
+            { label: 'Products', href: '/products' },
+          ],
+        },
+      };
+
+      const content = helpContent[context] || null;
+
+      res.json({
+        success: true,
+        data: content,
+      });
+    } catch (error: any) {
+      console.error('Help - get contextual help error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch contextual help',
         error: error.message,
       });
     }

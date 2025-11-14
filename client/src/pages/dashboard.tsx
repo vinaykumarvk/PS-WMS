@@ -6,7 +6,9 @@ import { TalkingPointsCard } from "@/components/dashboard/talking-points-card";
 import { AnnouncementsCard } from "@/components/dashboard/announcements-card";
 import { PerformanceCard } from "@/components/dashboard/performance-card";
 import { BusinessSnapshotStructured } from "@/components/dashboard/business-snapshot-structured";
-import { ThemeSwitcher } from "@/components/theme-switcher";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { useI18n } from "@/hooks/use-i18n";
+import { FadeIn, PageTransition } from "@/components/animations";
 import { 
   BusinessSnapshotSkeleton,
   ActionItemsSkeleton, 
@@ -19,6 +21,7 @@ import { format } from "date-fns";
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { t } = useI18n();
   
   // Set page title
   useEffect(() => {
@@ -89,24 +92,25 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-background transition-colors duration-300">
-      <div className="max-w-8xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 xl:px-10 py-4 sm:py-6 lg:py-8 space-y-6 sm:space-y-8 lg:space-y-10">
-        {/* Enhanced Page Header with Better Typography */}
-        <div className="animate-in slide-in-from-top-4 duration-500">
-          <div className="space-y-2">
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-foreground leading-tight tracking-tight">
-              Welcome back, <span className="text-primary font-extrabold">{user?.fullName.split(' ')[0]}</span>
-            </h1>
-            <div className="flex items-center justify-between">
-              <p className="text-muted-foreground text-sm sm:text-base lg:text-lg font-medium leading-relaxed">
-                {format(new Date(), "EEEE, MMMM d, yyyy")}
-              </p>
-              <div className="transition-transform duration-200 hover:scale-105">
-                <ThemeSwitcher />
+    <PageTransition>
+      <div className="min-h-screen bg-background transition-colors duration-300">
+        <div className="max-w-8xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 xl:px-10 py-4 sm:py-6 lg:py-8 space-y-6 sm:space-y-8 lg:space-y-10">
+          {/* Enhanced Page Header with Better Typography */}
+          <FadeIn direction="down" delay={0} duration={500}>
+            <div className="space-y-2">
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-foreground leading-tight tracking-tight">
+                {t("common.welcome")} back, <span className="text-primary font-extrabold">{user?.fullName.split(' ')[0]}</span>
+              </h1>
+              <div className="flex items-center justify-between">
+                <p className="text-muted-foreground text-sm sm:text-base lg:text-lg font-medium leading-relaxed">
+                  {format(new Date(), "EEEE, MMMM d, yyyy")}
+                </p>
+                <div className="transition-transform duration-200 hover:scale-105">
+                  <ThemeToggle />
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          </FadeIn>
         
         {/* Enhanced Responsive Grid Layout with Better Spacing */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8 xl:gap-10">
@@ -146,9 +150,10 @@ export default function Dashboard() {
         
 
         
-        {/* Additional spacing for mobile scroll with better padding */}
-        <div className="pb-8 sm:pb-12 lg:pb-16"></div>
+          {/* Additional spacing for mobile scroll with better padding */}
+          <div className="pb-8 sm:pb-12 lg:pb-16"></div>
+        </div>
       </div>
-    </div>
+    </PageTransition>
   );
 }

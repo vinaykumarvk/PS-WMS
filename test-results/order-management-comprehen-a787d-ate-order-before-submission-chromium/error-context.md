@@ -1,0 +1,133 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - link "Skip to main content" [ref=e3] [cursor=pointer]:
+    - /url: "#main-content"
+  - region "Notifications (F8)":
+    - list
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - navigation [ref=e7]:
+        - link "Dashboard" [ref=e8] [cursor=pointer]:
+          - /url: "#/"
+          - generic [ref=e9]:
+            - img [ref=e11]
+            - text: Dashboard
+        - link "Clients" [ref=e14] [cursor=pointer]:
+          - /url: "#/clients"
+          - generic [ref=e15]:
+            - img [ref=e17]
+            - text: Clients
+        - link "Prospects" [ref=e22] [cursor=pointer]:
+          - /url: "#/prospects"
+          - generic [ref=e23]:
+            - img [ref=e25]
+            - text: Prospects
+        - link "Calendar" [ref=e28] [cursor=pointer]:
+          - /url: "#/calendar"
+          - generic [ref=e29]:
+            - img [ref=e31]
+            - text: Calendar
+        - link "Tasks" [ref=e33] [cursor=pointer]:
+          - /url: "#/tasks"
+          - generic [ref=e34]:
+            - img [ref=e36]
+            - text: Tasks
+        - link "Notes" [ref=e40] [cursor=pointer]:
+          - /url: "#/communications"
+          - generic [ref=e41]:
+            - img [ref=e43]
+            - text: Notes
+        - link "Insights" [ref=e46] [cursor=pointer]:
+          - /url: "#/talking-points"
+          - generic [ref=e47]:
+            - img [ref=e49]
+            - text: Insights
+        - link "Updates" [ref=e51] [cursor=pointer]:
+          - /url: "#/announcements"
+          - generic [ref=e52]:
+            - img [ref=e54]
+            - text: Updates
+        - link "Products" [ref=e57] [cursor=pointer]:
+          - /url: "#/products"
+          - generic [ref=e58]:
+            - img [ref=e60]
+            - text: Products
+        - link "Order Management" [ref=e64] [cursor=pointer]:
+          - /url: "#/order-management"
+          - generic [ref=e65]:
+            - img [ref=e67]
+            - text: Order Management
+        - link "Help Center" [ref=e71] [cursor=pointer]:
+          - /url: "#/help-center"
+          - generic [ref=e72]:
+            - img [ref=e74]
+            - text: Help Center
+    - generic [ref=e77]:
+      - banner [ref=e78]:
+        - generic [ref=e79]:
+          - generic [ref=e81]:
+            - img "ABC Bank" [ref=e82]
+            - generic [ref=e83]:
+              - heading "ABC Bank" [level=1] [ref=e84]
+              - generic [ref=e85]: Wealth Management System
+          - generic [ref=e88]:
+            - generic:
+              - img
+            - searchbox "Search clients and prospects..." [ref=e89]
+          - generic [ref=e90]:
+            - button "Select Language" [ref=e91] [cursor=pointer]:
+              - img
+              - generic [ref=e92]: English
+              - generic [ref=e93]: Select Language
+            - button "Relationship Manager Relationship Manager profile" [ref=e95] [cursor=pointer]:
+              - generic [ref=e96]: Relationship Manager
+              - img "Relationship Manager profile" [ref=e97]
+      - main [ref=e98]:
+        - generic [ref=e100]:
+          - heading "Order Management" [level=1] [ref=e101]
+          - generic [ref=e102]:
+            - tablist [ref=e103]:
+              - tab "Products tab" [ref=e104] [cursor=pointer]: Products
+              - tab "Cart tab with 0 items" [ref=e105] [cursor=pointer]:
+                - text: Cart
+                - generic [ref=e106]: (0)
+              - tab "Review and submit tab" [active] [selected] [ref=e107] [cursor=pointer]: Review & Submit
+              - tab "Order book tab" [ref=e108] [cursor=pointer]: Order Book
+            - tabpanel "Review and submit tab" [ref=e109]:
+              - generic [ref=e110]:
+                - generic [ref=e111]:
+                  - generic [ref=e113]: Transaction Mode
+                  - generic [ref=e115]:
+                    - radiogroup "Transaction mode selection" [ref=e116]:
+                      - generic [ref=e117]:
+                        - radio "Physical" [ref=e118] [cursor=pointer]
+                        - generic [ref=e119] [cursor=pointer]: Physical
+                      - generic [ref=e120]:
+                        - radio "Email" [ref=e121] [cursor=pointer]
+                        - generic [ref=e122] [cursor=pointer]: Email
+                      - generic [ref=e123]:
+                        - radio "Telephone" [ref=e124] [cursor=pointer]
+                        - generic [ref=e125] [cursor=pointer]: Telephone
+                    - generic [ref=e126]:
+                      - text: EUIN (Optional)
+                      - textbox "EUIN (Optional)" [ref=e127]:
+                        - /placeholder: E123456
+                      - paragraph [ref=e128]: "Format: E followed by 6 alphanumeric characters"
+                    - paragraph [ref=e129]: Transaction mode is required
+                - generic [ref=e130]:
+                  - generic [ref=e132]: Nominee Information
+                  - generic [ref=e134]:
+                    - generic [ref=e135]:
+                      - checkbox "Opt out of nomination" [ref=e136] [cursor=pointer]
+                      - generic [ref=e137] [cursor=pointer]: Opt out of nomination
+                    - button "Add another nominee" [ref=e138] [cursor=pointer]:
+                      - img
+                      - text: Add Nominee
+              - generic [ref=e141]:
+                - button "Go back to cart" [ref=e142] [cursor=pointer]: Back to Cart
+                - button "Submit order" [disabled]: Submit Order
+          - button "Quick Invest" [ref=e143] [cursor=pointer]:
+            - img
+```

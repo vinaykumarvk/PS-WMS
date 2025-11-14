@@ -1,0 +1,75 @@
+{
+  "common": {
+    "save": "सहेजें",
+    "cancel": "रद्द करें",
+    "delete": "हटाएं",
+    "edit": "संपादित करें",
+    "create": "बनाएं",
+    "update": "अपडेट करें",
+    "search": "खोजें",
+    "filter": "फ़िल्टर",
+    "loading": "लोड हो रहा है...",
+    "error": "त्रुटि",
+    "success": "सफल",
+    "confirm": "पुष्टि करें",
+    "close": "बंद करें",
+    "back": "वापस",
+    "next": "अगला",
+    "previous": "पिछला",
+    "submit": "जमा करें",
+    "reset": "रीसेट करें",
+    "welcome": "स्वागत है",
+    "logout": "लॉगआउट",
+    "login": "लॉगिन",
+    "profile": "प्रोफ़ाइल",
+    "settings": "सेटिंग्स",
+    "help": "मदद",
+    "noResults": "कोई परिणाम नहीं मिला",
+    "searching": "खोज रहे हैं...",
+    "found": "मिला",
+    "results": "परिणाम",
+    "result": "परिणाम"
+  },
+  "navigation": {
+    "dashboard": "डैशबोर्ड",
+    "clients": "ग्राहक",
+    "prospects": "संभावित ग्राहक",
+    "orders": "ऑर्डर",
+    "products": "उत्पाद",
+    "analytics": "विश्लेषण",
+    "settings": "सेटिंग्स",
+    "profile": "प्रोफ़ाइल",
+    "help": "मदद",
+    "myAccount": "मेरा खाता",
+    "searchPlaceholder": "ग्राहक और संभावित ग्राहक खोजें..."
+  },
+  "orderManagement": {
+    "title": "ऑर्डर प्रबंधन",
+    "quickOrder": "त्वरित ऑर्डर",
+    "sipBuilder": "SIP बिल्डर",
+    "orderBook": "ऑर्डर बुक",
+    "orderConfirmation": "ऑर्डर पुष्टिकरण",
+    "orderHistory": "ऑर्डर इतिहास"
+  },
+  "theme": {
+    "light": "हल्का",
+    "dark": "गहरा",
+    "primesoft": "PrimeSoft ब्रांड",
+    "toggleTheme": "थीम बदलें",
+    "chooseTheme": "थीम चुनें",
+    "currentTheme": "वर्तमान"
+  },
+  "accessibility": {
+    "highContrast": "उच्च कंट्रास्ट मोड",
+    "screenReader": "स्क्रीन रीडर अनुकूलित",
+    "toggleHighContrast": "उच्च कंट्रास्ट मोड टॉगल करें",
+    "toggleScreenReader": "स्क्रीन रीडर अनुकूलन टॉगल करें"
+  },
+  "language": {
+    "selectLanguage": "भाषा चुनें",
+    "english": "अंग्रेजी",
+    "hindi": "हिंदी",
+    "currentLanguage": "वर्तमान भाषा"
+  }
+}
+

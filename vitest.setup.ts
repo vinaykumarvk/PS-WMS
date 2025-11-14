@@ -35,8 +35,29 @@ Object.defineProperty(window, 'innerWidth', {
   value: 1024,
 });
 
+// Mock scrollIntoView
+Element.prototype.scrollIntoView = vi.fn();
+HTMLElement.prototype.scrollIntoView = vi.fn();
+
 // Cleanup after each test
 afterEach(() => {
   cleanup();
 });
+
+// Mock Radix UI Select portal rendering
+Object.defineProperty(HTMLElement.prototype, 'offsetParent', {
+  get() {
+    return this.parentElement;
+  },
+});
+
+// Ensure portals are rendered in document body
+const originalCreateElement = document.createElement.bind(document);
+document.createElement = function(tagName: string, options?: ElementCreationOptions) {
+  const element = originalCreateElement(tagName, options);
+  if (tagName === 'div' && element.getAttribute?.('data-radix-portal')) {
+    document.body.appendChild(element);
+  }
+  return element;
+};
 

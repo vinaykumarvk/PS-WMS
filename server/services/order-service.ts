@@ -18,6 +18,9 @@ const orderFormDataSchema = z.object({
     nav: z.number().optional(),
     units: z.number().optional(),
     closeAc: z.boolean().optional(),
+    orderType: z.enum(['Initial Purchase', 'Additional Purchase']).optional(),
+    sourceSchemeId: z.number().optional(),
+    sourceSchemeName: z.string().optional(),
   })),
   transactionMode: z.object({
     mode: z.string(),

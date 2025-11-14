@@ -7,6 +7,8 @@ import { AccessibilityProvider } from "@/context/AccessibilityContext";
 import { NavigationProvider } from "@/context/navigation-context";
 import { ThemeProvider } from "@/components/theme-provider";
 import { PrivacyOverlay } from "@/components/PrivacyOverlay";
+import { OnboardingTour } from "@/components/onboarding/onboarding-tour";
+import { SkipLink } from "@/components/accessibility";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { MobileNav } from "@/components/layout/mobile-nav";
@@ -23,6 +25,7 @@ import ProspectDetail from "@/pages/prospect-detail";
 import LoginPage from "@/pages/login";
 
 import Analytics from "@/pages/analytics";
+import AnalyticsDashboard from "@/pages/analytics-dashboard";
 import Products from "@/pages/products";
 import Settings from "@/pages/settings";
 import Profile from "@/pages/profile";
@@ -38,6 +41,8 @@ import ClientCommunications from "@/pages/client-communications";
 import ClientAppointments from "@/pages/client-appointments";
 import ClientTasks from "@/pages/client-tasks";
 import ClientInsights from "@/pages/client-insights";
+import ClientGoals from "@/pages/client-goals";
+import HelpCenter from "@/pages/help-center";
 import AddClientPage from "@/pages/add-client";
 import AddFinancialProfilePage from "@/pages/add-financial-profile";
 import Tasks from "@/pages/tasks";
@@ -45,8 +50,14 @@ import Calendar from "@/pages/calendar";
 import QMPortal from "@/pages/qm-portal";
 import KnowledgeProfiling from "@/pages/knowledge-profiling";
 import RiskProfiling from "@/pages/risk-profiling";
-import OrderManagement from "@/pages/order-management";
 import { Loader2 } from "lucide-react";
+import { lazy, Suspense } from "react";
+
+// Lazy load heavy order management modules for code splitting
+const OrderManagement = lazy(() => import("@/pages/order-management"));
+const OrderConfirmationPage = lazy(() => import("@/pages/order-management/components/order-confirmation/order-confirmation-page"));
+const AutomationPage = lazy(() => import("@/pages/automation"));
+const SIPBuilderManager = lazy(() => import("@/pages/sip-builder-manager"));
 
 // Custom router implementation using hash-based routing
 function useHashRouter() {
@@ -252,6 +263,8 @@ function AuthenticatedApp() {
         return <ClientTasks />;
       case /^\/clients\/\d+\/insights$/.test(currentRoute):
         return <ClientInsights />;
+      case /^\/clients\/\d+\/goals$/.test(currentRoute):
+        return <ClientGoals />;
       case /^\/client-insights\/\d+$/.test(currentRoute):
         return <ClientInsights />;
       case /^\/clients\/\d+\/portfolio-report$/.test(currentRoute):
@@ -280,12 +293,55 @@ function AuthenticatedApp() {
       case currentRoute === '/announcements':
         return <Announcements />;
       case currentRoute === '/analytics':
+        return <AnalyticsDashboard />;
+      case currentRoute === '/analytics-legacy':
         return <Analytics />;
       case currentRoute === '/products':
         return <Products />;
       case currentRoute === '/order-management':
       case currentRoute === '/orders':
-        return <OrderManagement />;
+        return (
+          <Suspense fallback={
+            <div className="flex h-screen items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          }>
+            <OrderManagement />
+          </Suspense>
+        );
+      case currentRoute === '/automation':
+        return (
+          <Suspense fallback={
+            <div className="flex h-screen items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          }>
+            <AutomationPage />
+          </Suspense>
+        );
+      case /^\/order-management\/orders\/\d+\/confirmation$/.test(currentRoute):
+        const orderId = parseInt(currentRoute.split('/')[3]);
+        return (
+          <Suspense fallback={
+            <div className="flex h-screen items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          }>
+            <OrderConfirmationPage orderId={orderId} />
+          </Suspense>
+        );
+      case currentRoute === '/sip-builder':
+      case currentRoute === '/sip-manager':
+      case currentRoute === '/sip':
+        return (
+          <Suspense fallback={
+            <div className="flex h-screen items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          }>
+            <SIPBuilderManager />
+          </Suspense>
+        );
       case currentRoute === '/qm-portal':
         return <QMPortal />;
       case /^\/knowledge-profiling(\?.*)?$/.test(currentRoute):
@@ -296,6 +352,9 @@ function AuthenticatedApp() {
         return <Settings />;
       case currentRoute === '/profile':
         return <Profile />;
+      case currentRoute === '/help':
+      case currentRoute === '/help-center':
+        return <HelpCenter />;
       default:
         return <NotFound />;
     }
@@ -374,9 +433,11 @@ function App() {
         <TooltipProvider>
           <AccessibilityProvider>
             <NavigationProvider>
+              <SkipLink />
               <Toaster />
               {user ? <AuthenticatedApp /> : <LoginPage />}
               <PrivacyOverlay />
+              {user && <OnboardingTour />}
             </NavigationProvider>
           </AccessibilityProvider>
         </TooltipProvider>

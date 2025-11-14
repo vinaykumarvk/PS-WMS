@@ -1,0 +1,75 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "update": "Update",
+    "search": "Search",
+    "filter": "Filter",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "confirm": "Confirm",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "submit": "Submit",
+    "reset": "Reset",
+    "welcome": "Welcome",
+    "logout": "Logout",
+    "login": "Login",
+    "profile": "Profile",
+    "settings": "Settings",
+    "help": "Help",
+    "noResults": "No results found",
+    "searching": "Searching...",
+    "found": "Found",
+    "results": "results",
+    "result": "result"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "clients": "Clients",
+    "prospects": "Prospects",
+    "orders": "Orders",
+    "products": "Products",
+    "analytics": "Analytics",
+    "settings": "Settings",
+    "profile": "Profile",
+    "help": "Help",
+    "myAccount": "My Account",
+    "searchPlaceholder": "Search clients and prospects..."
+  },
+  "orderManagement": {
+    "title": "Order Management",
+    "quickOrder": "Quick Order",
+    "sipBuilder": "SIP Builder",
+    "orderBook": "Order Book",
+    "orderConfirmation": "Order Confirmation",
+    "orderHistory": "Order History"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "primesoft": "PrimeSoft Brand",
+    "toggleTheme": "Toggle theme",
+    "chooseTheme": "Choose Theme",
+    "currentTheme": "Current"
+  },
+  "accessibility": {
+    "highContrast": "High Contrast Mode",
+    "screenReader": "Screen Reader Optimized",
+    "toggleHighContrast": "Toggle high contrast mode",
+    "toggleScreenReader": "Toggle screen reader optimizations"
+  },
+  "language": {
+    "selectLanguage": "Select Language",
+    "english": "English",
+    "hindi": "हिंदी",
+    "currentLanguage": "Current Language"
+  }
+}
+

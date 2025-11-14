@@ -4,6 +4,7 @@
  */
 
 export type TransactionType = 'Purchase' | 'Redemption' | 'Switch' | 'Full Redemption' | 'Full Switch';
+export type OrderType = 'Initial Purchase' | 'Additional Purchase';
 export type TransactionMode = 'Physical' | 'Email' | 'Telephone';
 export type OrderStatus = 
   | 'Pending' 
@@ -48,6 +49,9 @@ export interface CartItem {
   mode?: TransactionMode;
   dividendInstruction?: string;
   closeAc?: boolean; // For Full Switch/Redemption
+  orderType?: OrderType; // Initial Purchase or Additional Purchase
+  sourceSchemeId?: number; // For Switch transactions
+  sourceSchemeName?: string; // For Switch transactions
 }
 
 export interface Nominee {
@@ -180,5 +184,73 @@ export interface FullRedemptionData {
   units: number; // Exact units, no rounding
   amount: number;
   closeAc: boolean; // Always true for Full Redemption
+}
+
+// ============================================================================
+// Goal-Based Investing Types (Module 3)
+// ============================================================================
+
+export type GoalType = 
+  | 'Retirement' 
+  | 'Child Education' 
+  | 'House Purchase' 
+  | 'Vacation' 
+  | 'Emergency Fund' 
+  | 'Other';
+
+export interface Goal {
+  id: string;
+  clientId: number;
+  name: string;
+  type: GoalType;
+  targetAmount: number;
+  targetDate: string;
+  currentAmount: number;
+  monthlyContribution?: number;
+  schemes: {
+    schemeId: number;
+    allocation: number; // percentage
+  }[];
+  progress: number; // percentage (0-100)
+  status: 'Active' | 'Completed' | 'Paused' | 'Cancelled';
+  description?: string;
+  priority: 'Low' | 'Medium' | 'High';
+  createdAt: string;
+  updatedAt?: string;
+  completedAt?: string;
+}
+
+export interface GoalAllocation {
+  id: number;
+  goalId: string;
+  transactionId?: number;
+  amount: number;
+  allocatedAt: string;
+  notes?: string;
+}
+
+export interface GoalProgress {
+  goalId: string;
+  currentAmount: number;
+  targetAmount: number;
+  progress: number;
+  monthsRemaining: number;
+  projectedCompletion?: string;
+  onTrack: boolean;
+  shortfall?: number;
+}
+
+export interface GoalRecommendation {
+  goalId: string;
+  goalName: string;
+  recommendedAmount: number;
+  recommendedSchemes: {
+    schemeId: number;
+    schemeName: string;
+    allocation: number;
+    reason: string;
+  }[];
+  reason: string;
+  priority: 'High' | 'Medium' | 'Low';
 }
 

@@ -1,0 +1,269 @@
+# Page snapshot
+
+```yaml
+- generic:
+  - generic:
+    - link:
+      - /url: "#main-content"
+      - text: Skip to main content
+    - list
+    - generic:
+      - complementary:
+        - generic:
+          - navigation:
+            - link:
+              - /url: "#/"
+              - generic:
+                - generic:
+                  - img
+                - text: Dashboard
+            - link:
+              - /url: "#/clients"
+              - generic:
+                - generic:
+                  - img
+                - text: Clients
+            - link:
+              - /url: "#/prospects"
+              - generic:
+                - generic:
+                  - img
+                - text: Prospects
+            - link:
+              - /url: "#/calendar"
+              - generic:
+                - generic:
+                  - img
+                - text: Calendar
+            - link:
+              - /url: "#/tasks"
+              - generic:
+                - generic:
+                  - img
+                - text: Tasks
+            - link:
+              - /url: "#/communications"
+              - generic:
+                - generic:
+                  - img
+                - text: Notes
+            - link:
+              - /url: "#/talking-points"
+              - generic:
+                - generic:
+                  - img
+                - text: Insights
+            - link:
+              - /url: "#/announcements"
+              - generic:
+                - generic:
+                  - img
+                - text: Updates
+            - link:
+              - /url: "#/products"
+              - generic:
+                - generic:
+                  - img
+                - text: Products
+            - link:
+              - /url: "#/order-management"
+              - generic:
+                - generic:
+                  - img
+                - text: Order Management
+            - link:
+              - /url: "#/help-center"
+              - generic:
+                - generic:
+                  - img
+                - text: Help Center
+      - generic:
+        - banner:
+          - generic:
+            - generic:
+              - generic:
+                - img
+                - generic:
+                  - heading [level=1]: ABC Bank
+                  - generic: Wealth Management System
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - img
+                  - searchbox
+            - generic:
+              - button:
+                - img
+                - generic: English
+                - generic: Select Language
+              - generic:
+                - button:
+                  - generic: Relationship Manager
+                  - img
+        - main:
+          - generic:
+            - generic:
+              - heading [level=1]: Order Management
+              - generic:
+                - tablist:
+                  - tab [selected]: Products
+                  - tab:
+                    - text: Cart
+                    - generic: (0)
+                  - tab: Review & Submit
+                  - tab: Order Book
+                - tabpanel:
+                  - generic:
+                    - button:
+                      - img
+                      - generic: Show Portfolio
+                    - button [disabled]: Switch Funds
+                    - button [disabled]: Redeem
+                    - button: Create SIP
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Product Selection
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - img
+                                  - textbox:
+                                    - /placeholder: Search products...
+                              - combobox:
+                                - generic: All Categories
+                                - img
+                              - combobox:
+                                - generic: All RTAs
+                                - img
+                            - generic:
+                              - generic:
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - heading [level=3]: HDFC Equity Fund
+                                        - generic: Equity
+                                        - generic: CAMS
+                                      - generic:
+                                        - generic: "NAV: ₹45.25"
+                                        - generic: "Min: ₹1,000"
+                                        - generic: "Max: ₹1,000,000"
+                                        - generic: "Risk: Moderate"
+                                    - generic:
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                        - generic: Add to Cart
+                              - generic:
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - heading [level=3]: ICICI Balanced Fund
+                                        - generic: Hybrid
+                                        - generic: KFintech
+                                      - generic:
+                                        - generic: "NAV: ₹32.10"
+                                        - generic: "Min: ₹5,000"
+                                        - generic: "Max: ₹5,000,000"
+                                        - generic: "Risk: Moderate"
+                                    - generic:
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                        - generic: Add to Cart
+                              - generic:
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - heading [level=3]: SBI Debt Fund
+                                        - generic: Debt
+                                        - generic: CAMS
+                                      - generic:
+                                        - generic: "NAV: ₹18.75"
+                                        - generic: "Min: ₹1,000"
+                                        - generic: "Risk: Low"
+                                    - generic:
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                      - button:
+                                        - img
+                                        - generic: Add to Cart
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Cart Summary
+                        - generic:
+                          - generic:
+                            - generic:
+                              - img
+                            - heading [level=3]: Cart is empty
+                            - paragraph: Add products from the product list to get started.
+              - button:
+                - img
+  - dialog "Add Order - HDFC Equity Fund" [ref=e2]:
+    - generic [ref=e3]:
+      - heading "Add Order - HDFC Equity Fund" [level=2] [ref=e4]
+      - paragraph [ref=e5]: Select order type and enter order details
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]: Transaction Type *
+        - radiogroup "Select transaction type" [ref=e9]:
+          - generic [ref=e10]:
+            - radio "Purchase" [checked] [ref=e11] [cursor=pointer]:
+              - img [ref=e13]
+            - generic [ref=e15] [cursor=pointer]: Purchase
+      - generic [ref=e16]:
+        - generic [ref=e17]: Order Type *
+        - radiogroup [ref=e18]:
+          - generic [ref=e19]:
+            - radio "Initial Purchase" [checked] [ref=e20] [cursor=pointer]:
+              - img [ref=e22]
+            - generic [ref=e24] [cursor=pointer]: Initial Purchase
+          - generic [ref=e25]:
+            - radio "Additional Purchase" [ref=e26] [cursor=pointer]
+            - generic [ref=e27] [cursor=pointer]: Additional Purchase
+        - alert [ref=e28]:
+          - img [ref=e29]
+          - generic [ref=e31]: This is the first purchase of this scheme. Nominee information may be required.
+      - generic [ref=e32]:
+        - generic [ref=e33]: Amount (₹) *
+        - spinbutton "Amount (₹) required" [active] [ref=e34]: "10000"
+        - paragraph [ref=e35]: "Min: ₹1,000 | Max: ₹1,000,000"
+      - generic [ref=e36]:
+        - text: Units (Calculated)
+        - spinbutton "Units (Calculated)" [disabled] [ref=e37]: "220.9945"
+        - paragraph [ref=e38]: "Based on NAV: ₹45.25"
+    - generic [ref=e39]:
+      - button "Cancel adding to cart" [ref=e40] [cursor=pointer]: Cancel
+      - button "Add item to cart" [ref=e41] [cursor=pointer]: Add to Cart
+    - button "Close" [ref=e42] [cursor=pointer]:
+      - img [ref=e43]
+      - generic [ref=e46]: Close
+```

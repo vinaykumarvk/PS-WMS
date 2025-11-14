@@ -13,6 +13,9 @@ import {
   Lightbulb,
   Bell,
   ShoppingCart,
+  HelpCircle,
+  Zap,
+  Repeat,
 } from "lucide-react";
 import primesoftLogo from "../../assets/primesoft-logo.svg";
 import { useEffect, useState } from "react";
@@ -29,6 +32,10 @@ const navigationItems = [
   { name: "Updates", href: "/announcements", icon: Bell },
   { name: "Products", href: "/products", icon: Package },
   { name: "Order Management", href: "/order-management", icon: ShoppingCart },
+  { name: "SIP Builder", href: "/sip-builder", icon: Repeat },
+  { name: "Automation", href: "/automation", icon: Zap },
+  { name: "Analytics", href: "/analytics", icon: BarChart2 },
+  { name: "Help Center", href: "/help-center", icon: HelpCircle },
 ];
 
 export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNavigate?: () => void }) {

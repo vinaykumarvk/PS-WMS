@@ -39,19 +39,27 @@ export default function ProductCart({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4">
       {/* Cart Items */}
-      <div className="space-y-3">
+      <div className="space-y-2 sm:space-y-3">
         {itemsArray.map((item) => (
           <Card key={item.id} className="border-border">
-            <CardContent className="p-4">
-              <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex flex-col sm:flex-row items-start justify-between gap-3 sm:gap-4">
+                <div className="flex-1 min-w-0 w-full sm:w-auto">
                   <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <h4 className="font-semibold text-foreground break-words">{item.schemeName}</h4>
-                    <Badge variant="outline">{item.transactionType}</Badge>
+                    <h4 className="font-semibold text-foreground break-words text-sm sm:text-base">{item.schemeName}</h4>
+                    <Badge variant="outline" className="text-xs">{item.transactionType}</Badge>
+                    {item.orderType && (
+                      <Badge variant="secondary" className="text-xs">{item.orderType}</Badge>
+                    )}
+                    {item.sourceSchemeName && (
+                      <Badge variant="outline" className="text-xs">
+                        From: {item.sourceSchemeName}
+                      </Badge>
+                    )}
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 text-sm text-muted-foreground">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 text-xs sm:text-sm text-muted-foreground">
                     <div>
                       <span className="font-medium">Amount:</span> ₹{item.amount.toLocaleString()}
                     </div>
@@ -67,7 +75,7 @@ export default function ProductCart({
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex items-center gap-2 flex-shrink-0 w-full sm:w-auto justify-end sm:justify-start">
                   {onEdit && (
                     <Button
                       variant="ghost"
@@ -76,8 +84,9 @@ export default function ProductCart({
                       aria-label={`Edit ${item.schemeName} order details`}
                       title="Edit Order"
                       type="button"
+                      className="h-9 w-9 sm:h-10 sm:w-10 touch-manipulation"
                     >
-                      <Edit className="h-4 w-4" />
+                      <Edit className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
                     </Button>
                   )}
                   {editable && onUpdateQuantity && (
@@ -93,7 +102,7 @@ export default function ProductCart({
                           const quantity = Math.max(1, parseFloat(e.target.value) || 1);
                           onUpdateQuantity(item.id, quantity);
                         }}
-                        className="w-20"
+                        className="w-20 sm:w-24 min-h-[44px] text-base sm:text-sm"
                         aria-label={`Quantity for ${item.schemeName}`}
                       />
                     </div>
@@ -105,8 +114,9 @@ export default function ProductCart({
                       onClick={() => onRemove(item.id)}
                       aria-label={`Remove ${item.schemeName} from cart`}
                       type="button"
+                      className="h-9 w-9 sm:h-10 sm:w-10 touch-manipulation"
                     >
-                      <Trash2 className="h-4 w-4 text-destructive" />
+                      <Trash2 className="h-4 w-4 sm:h-5 sm:w-5 text-destructive" aria-hidden="true" />
                     </Button>
                   )}
                 </div>
@@ -116,17 +126,17 @@ export default function ProductCart({
         ))}
       </div>
 
-      <Separator />
+      <Separator className="my-3 sm:my-4" />
 
       {/* Cart Summary */}
-      <div className="space-y-2">
+      <div className="space-y-2 sm:space-y-3">
         <div className="flex justify-between items-center">
-          <span className="text-sm font-medium text-muted-foreground">Total Items:</span>
-          <span className="text-sm font-semibold text-foreground">{totalItems}</span>
+          <span className="text-xs sm:text-sm font-medium text-muted-foreground">Total Items:</span>
+          <span className="text-xs sm:text-sm font-semibold text-foreground">{totalItems}</span>
         </div>
-        <div className="flex justify-between items-center">
-          <span className="text-sm font-medium text-muted-foreground">Total Amount:</span>
-          <span className="text-lg font-bold text-foreground">₹{totalAmount.toLocaleString()}</span>
+        <div className="flex justify-between items-center pt-1 border-t border-border">
+          <span className="text-sm sm:text-base font-medium text-muted-foreground">Total Amount:</span>
+          <span className="text-base sm:text-lg md:text-xl font-bold text-foreground">₹{totalAmount.toLocaleString()}</span>
         </div>
       </div>
     </div>

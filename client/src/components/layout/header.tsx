@@ -18,6 +18,8 @@ import primesoftLogo from "../../assets/primesoft-logo.svg";
 import sravanAvatar from "../../assets/sravan-avatar.svg";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/theme-provider";
+import { LanguageSwitcher } from "@/components/i18n/language-switcher";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface HeaderProps {
   isMobileMenuOpen?: boolean;
@@ -34,6 +36,7 @@ export function Header({
 }: HeaderProps = {}) {
   const { user, logout } = useAuth();
   const { theme } = useTheme();
+  const { t } = useI18n();
   const [, navigate] = useLocation();
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [hideSearch, setHideSearch] = useState(false);
@@ -230,7 +233,7 @@ export function Header({
               <input 
                 ref={inputRef}
                 className="block w-full pl-10 pr-10 py-2 border border-border rounded-md leading-5 bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-primary focus:border-primary sm:text-sm" 
-                placeholder="Search clients and prospects..." 
+                placeholder={t("navigation.searchPlaceholder")} 
                 type="search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -348,13 +351,13 @@ export function Header({
                   <input
                     autoFocus
                     className="block w-full pl-10 pr-10 py-3 border border-border rounded-md leading-5 bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-primary focus:border-primary text-base"
-                    placeholder="Search clients and prospects..."
+                    placeholder={t("navigation.searchPlaceholder")}
                     type="search"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={handleKeyDown}
                     autoComplete="off"
-                    aria-label="Search clients and prospects"
+                    aria-label={t("navigation.searchPlaceholder")}
                   />
                   {searchQuery && (
                     <button
@@ -375,7 +378,10 @@ export function Header({
         
         {/* Right Navigation Items */}
         {!hideProfilePicture && (
-          <div className="flex items-center pr-2 sm:pr-4 ml-2 sm:ml-8">
+          <div className="flex items-center gap-2 pr-2 sm:pr-4 ml-2 sm:ml-8">
+            {/* Language Switcher */}
+            <LanguageSwitcher variant="ghost" size="sm" />
+            
             {/* Profile Dropdown */}
             <div className="relative">
               <DropdownMenu>
@@ -390,11 +396,11 @@ export function Header({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                  <DropdownMenuLabel>{t("navigation.myAccount")}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => window.location.hash = "/profile"}>Profile</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => window.location.hash = "/profile"}>{t("common.profile")}</DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => logout()}>Logout</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => logout()}>{t("common.logout")}</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

@@ -148,6 +148,39 @@
   width: 1px;
 }
 
+/* Reduced motion support */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Font size accessibility */
+.font-normal {
+  font-size: 1rem;
+}
+
+.font-large {
+  font-size: 1.125rem;
+}
+
+.font-large h1 { font-size: 2rem; }
+.font-large h2 { font-size: 1.75rem; }
+.font-large h3 { font-size: 1.5rem; }
+.font-large button { font-size: 1.125rem; }
+
+.font-extra-large {
+  font-size: 1.25rem;
+}
+
+.font-extra-large h1 { font-size: 2.25rem; }
+.font-extra-large h2 { font-size: 2rem; }
+.font-extra-large h3 { font-size: 1.75rem; }
+.font-extra-large button { font-size: 1.25rem; }
+
 /* Animation classes */
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -732,6 +765,113 @@
       width: 100% !important;
       max-width: 100% !important;
       min-width: 0 !important;
+    }
+  }
+
+  /* Enhanced Mobile Optimizations */
+  @media (max-width: 768px) {
+    /* Touch-friendly tap targets */
+    button, a, [role="button"] {
+      min-height: 44px;
+      min-width: 44px;
+    }
+
+    /* Improved scrolling */
+    * {
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Prevent text size adjustment on orientation change */
+    html {
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+
+    /* Better form inputs on mobile */
+    input, textarea, select {
+      font-size: 16px; /* Prevents zoom on iOS */
+    }
+
+    /* Safe area support for notched devices */
+    .safe-area-top {
+      padding-top: env(safe-area-inset-top);
+    }
+
+    .safe-area-bottom {
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .safe-area-left {
+      padding-left: env(safe-area-inset-left);
+    }
+
+    .safe-area-right {
+      padding-right: env(safe-area-inset-right);
+    }
+
+    /* Mobile-specific spacing */
+    .mobile-padding {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+
+    .mobile-margin {
+      margin-left: 1rem;
+      margin-right: 1rem;
+    }
+
+    /* Optimize images for mobile */
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+
+    /* Better card layouts on mobile */
+    .card {
+      margin-bottom: 1rem;
+    }
+
+    /* Improved table responsiveness */
+    table {
+      display: block;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Better button groups */
+    .button-group {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .button-group > * {
+      width: 100%;
+    }
+  }
+
+  /* Tablet optimizations */
+  @media (min-width: 769px) and (max-width: 1023px) {
+    .tablet-padding {
+      padding-left: 2rem;
+      padding-right: 2rem;
+    }
+  }
+
+  /* Performance optimizations */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* High contrast mode support */
+  @media (prefers-contrast: high) {
+    .card {
+      border-width: 2px;
     }
   }
 }

@@ -7,11 +7,12 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/empty-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Info, FileText, AlertTriangle } from 'lucide-react';
+import { Search, Plus, Info, FileText, AlertTriangle, Star } from 'lucide-react';
 import { Product } from '../types/order.types';
 import { apiRequest } from '@/lib/queryClient';
 import SchemeInfoOverlay from './overlays/scheme-info-overlay';
 import DocumentsOverlay from './overlays/documents-overlay';
+import { useAddFavorite, useRemoveFavorite, useFavorites } from '../hooks/use-quick-order';
 
 interface ProductListProps {
   onAddToCart: (product: Product) => void;
@@ -29,6 +30,39 @@ export default function ProductList({
   const [rtaFilter, setRtaFilter] = useState<string>('all');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [documentsProductId, setDocumentsProductId] = useState<number | null>(null);
+
+  // Quick Order hooks
+  const { data: favorites = [] } = useFavorites();
+  const addFavoriteMutation = useAddFavorite();
+  const removeFavoriteMutation = useRemoveFavorite();
+
+  // Check if product is favorited
+  const isFavorite = (productId: number) => {
+    return favorites.some(fav => fav.productId === productId);
+  };
+
+  // Get favorite ID for a product
+  const getFavoriteId = (productId: number) => {
+    const favorite = favorites.find(fav => fav.productId === productId);
+    return favorite?.id;
+  };
+
+  // Handle toggle favorite
+  const handleToggleFavorite = async (product: Product, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      if (isFavorite(product.id)) {
+        const favoriteId = getFavoriteId(product.id);
+        if (favoriteId) {
+          await removeFavoriteMutation.mutateAsync(favoriteId);
+        }
+      } else {
+        await addFavoriteMutation.mutateAsync(product.id);
+      }
+    } catch (error) {
+      // Error handling is done in the mutation hooks
+    }
+  };
 
   const { data: products, isLoading, error } = useQuery<Product[]>({
     queryKey: ['/api/order-management/products'],
@@ -89,20 +123,21 @@ export default function ProductList({
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="flex-1">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+        <div className="flex-1 min-w-0">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" aria-hidden="true" />
             <Input
               placeholder="Search products..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
+              className="pl-10 min-h-[44px] text-base sm:text-sm"
+              aria-label="Search products"
             />
           </div>
         </div>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger className="w-full sm:w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px] min-h-[44px] text-base sm:text-sm" aria-label="Filter by category">
             <SelectValue placeholder="Category" />
           </SelectTrigger>
           <SelectContent>
@@ -113,7 +148,7 @@ export default function ProductList({
           </SelectContent>
         </Select>
         <Select value={rtaFilter} onValueChange={setRtaFilter}>
-          <SelectTrigger className="w-full sm:w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px] min-h-[44px] text-base sm:text-sm" aria-label="Filter by RTA">
             <SelectValue placeholder="RTA" />
           </SelectTrigger>
           <SelectContent>
@@ -126,18 +161,18 @@ export default function ProductList({
       </div>
 
       {/* Product List */}
-      <div className="space-y-3">
+      <div className="space-y-3 sm:space-y-4">
         {filteredProducts.map((product) => (
           <Card key={product.id} className="hover:shadow-md transition-shadow">
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <h3 className="font-semibold text-foreground">{product.schemeName}</h3>
-                    <Badge variant="outline">{product.category}</Badge>
-                    <Badge variant="secondary">{product.rta}</Badge>
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex flex-col sm:flex-row items-start justify-between gap-3 sm:gap-4">
+                <div className="flex-1 min-w-0 w-full sm:w-auto">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <h3 className="font-semibold text-foreground text-sm sm:text-base break-words">{product.schemeName}</h3>
+                    <Badge variant="outline" className="text-xs">{product.category}</Badge>
+                    <Badge variant="secondary" className="text-xs">{product.rta}</Badge>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-muted-foreground">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3 md:gap-4 text-xs sm:text-sm text-muted-foreground">
                     <div>
                       <span className="font-medium">NAV:</span> ₹{product.nav.toFixed(2)}
                     </div>
@@ -154,7 +189,22 @@ export default function ProductList({
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 mt-4 sm:mt-0 sm:ml-4">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end sm:justify-start">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => handleToggleFavorite(product, e)}
+                    aria-label={`${isFavorite(product.id) ? 'Remove from' : 'Add to'} favorites`}
+                    title={isFavorite(product.id) ? 'Remove from favorites' : 'Add to favorites'}
+                    type="button"
+                    disabled={addFavoriteMutation.isPending || removeFavoriteMutation.isPending}
+                    className="h-9 w-9 sm:h-10 sm:w-10 touch-manipulation"
+                  >
+                    <Star 
+                      className={`h-4 w-4 sm:h-5 sm:w-5 ${isFavorite(product.id) ? 'text-yellow-500 fill-yellow-500' : ''}`}
+                      aria-hidden="true"
+                    />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -162,8 +212,9 @@ export default function ProductList({
                     aria-label={`View scheme info for ${product.schemeName}`}
                     title="Scheme Info"
                     type="button"
+                    className="h-9 w-9 sm:h-10 sm:w-10 touch-manipulation"
                   >
-                    <Info className="h-4 w-4" />
+                    <Info className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
                   </Button>
                   {onOpenDocuments && (
                     <Button
@@ -176,8 +227,9 @@ export default function ProductList({
                       aria-label={`View documents for ${product.schemeName}`}
                       title="Documents"
                       type="button"
+                      className="h-9 w-9 sm:h-10 sm:w-10 touch-manipulation"
                     >
-                      <FileText className="h-4 w-4" />
+                      <FileText className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
                     </Button>
                   )}
                   {onOpenDeviations && (
@@ -188,8 +240,9 @@ export default function ProductList({
                       aria-label={`View deviations for ${product.schemeName}`}
                       title="Deviations"
                       type="button"
+                      className="h-9 w-9 sm:h-10 sm:w-10 touch-manipulation"
                     >
-                      <AlertTriangle className="h-4 w-4 text-warning" />
+                      <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 text-warning" aria-hidden="true" />
                     </Button>
                   )}
                   <Button
@@ -197,9 +250,11 @@ export default function ProductList({
                     size="sm"
                     type="button"
                     aria-label={`Add ${product.schemeName} to cart`}
+                    className="min-h-[44px] touch-manipulation text-xs sm:text-sm flex-1 sm:flex-initial"
                   >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add to Cart
+                    <Plus className="h-4 w-4 mr-1 sm:mr-2 flex-shrink-0" aria-hidden="true" />
+                    <span className="hidden sm:inline">Add to Cart</span>
+                    <span className="sm:hidden">Add</span>
                   </Button>
                 </div>
               </div>

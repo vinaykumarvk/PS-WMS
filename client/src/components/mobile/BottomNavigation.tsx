@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Home, Calendar, CheckSquare, Users, Menu } from 'lucide-react';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useQuery } from '@tanstack/react-query';
+import { MobileMenuDrawer } from './mobile-menu-drawer';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface BottomNavigationProps {
   className?: string;
@@ -10,6 +12,7 @@ interface BottomNavigationProps {
 
 const BottomNavigation: React.FC<BottomNavigationProps> = ({ className = '', onMoreClick }) => {
   const [currentPath, setCurrentPath] = useState<string>('');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const isMobile = useMediaQuery('(max-width: 768px)');
 
   // Fetch data for notification dots
@@ -145,13 +148,22 @@ const BottomNavigation: React.FC<BottomNavigationProps> = ({ className = '', onM
       </button>
       
       <button 
-        onClick={onMoreClick || (() => navigateTo('/prospects'))}
+        onClick={() => {
+          setIsMenuOpen(true);
+          onMoreClick?.();
+        }}
         className={`flex flex-col items-center justify-center w-full h-full ${isActive('/menu') ? 'text-primary' : 'text-muted-foreground'} relative`}
         aria-label="More"
       >
         <Menu size={24} />
         <span className="text-xs mt-1">More</span>
       </button>
+      
+      <MobileMenuDrawer 
+        open={isMenuOpen} 
+        onOpenChange={setIsMenuOpen}
+        currentPath={currentPath}
+      />
     </div>
   );
 };

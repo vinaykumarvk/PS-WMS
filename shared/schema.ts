@@ -1226,3 +1226,342 @@ export type InsertRiskScoringMatrix = z.infer<typeof insertRiskScoringMatrixSche
 
 export type AuditRiskChange = typeof auditRiskChanges.$inferSelect;
 export type InsertAuditRiskChange = z.infer<typeof insertAuditRiskChangeSchema>;
+
+// Quick Order Favorites - User's favorite schemes for quick order placement
+export const quickOrderFavorites = pgTable("quick_order_favorites", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  addedAt: timestamp("added_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertQuickOrderFavoriteSchema = createInsertSchema(quickOrderFavorites).omit({
+  id: true,
+  addedAt: true,
+  createdAt: true,
+});
+
+export type QuickOrderFavorite = typeof quickOrderFavorites.$inferSelect;
+export type InsertQuickOrderFavorite = z.infer<typeof insertQuickOrderFavoriteSchema>;
+
+// SIP Plans table
+export const sipPlans = pgTable("sip_plans", {
+  id: text("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  schemeId: integer("scheme_id").references(() => products.id).notNull(),
+  schemeName: text("scheme_name").notNull(),
+  amount: integer("amount").notNull(),
+  frequency: text("frequency").notNull(), // Daily, Weekly, Monthly, Quarterly
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date"),
+  installments: integer("installments").notNull(),
+  completedInstallments: integer("completed_installments").default(0),
+  status: text("status").notNull().default("Active"), // Active, Paused, Cancelled, Completed, Failed
+  nextInstallmentDate: date("next_installment_date"),
+  totalInvested: integer("total_invested").default(0),
+  currentValue: integer("current_value").default(0),
+  gainLoss: integer("gain_loss").default(0),
+  gainLossPercent: doublePrecision("gain_loss_percent").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  pausedAt: timestamp("paused_at"),
+  cancelledAt: timestamp("cancelled_at"),
+  cancellationReason: text("cancellation_reason"),
+  lastExecutionDate: timestamp("last_execution_date"),
+  lastExecutionStatus: text("last_execution_status"), // Success, Failed
+  failureCount: integer("failure_count").default(0),
+  dayOfMonth: integer("day_of_month"), // For monthly SIPs
+  dayOfWeek: integer("day_of_week"), // For weekly SIPs
+});
+
+export const insertSIPPlanSchema = createInsertSchema(sipPlans).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type SIPPlanDB = typeof sipPlans.$inferSelect;
+export type InsertSIPPlan = z.infer<typeof insertSIPPlanSchema>;
+
+// Goals table
+export const goals = pgTable("goals", {
+  id: text("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  name: text("name").notNull(),
+  type: text("type").notNull(), // Retirement, Child Education, House Purchase, Vacation, Emergency Fund, Other
+  targetAmount: integer("target_amount").notNull(),
+  targetDate: date("target_date").notNull(),
+  currentAmount: integer("current_amount").default(0),
+  monthlyContribution: integer("monthly_contribution"),
+  schemes: jsonb("schemes").default([]), // JSON array of scheme allocations
+  progress: doublePrecision("progress").default(0), // 0-100 percentage
+  status: text("status").default("Active"), // Active, Completed, Paused, Cancelled
+  description: text("description"),
+  priority: text("priority").default("Medium"), // Low, Medium, High
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const insertGoalSchema = createInsertSchema(goals).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type GoalDB = typeof goals.$inferSelect;
+export type InsertGoal = z.infer<typeof insertGoalSchema>;
+
+// Goal Allocations table - links transactions/orders to goals
+export const goalAllocations = pgTable("goal_allocations", {
+  id: serial("id").primaryKey(),
+  goalId: text("goal_id").references(() => goals.id).notNull(),
+  transactionId: integer("transaction_id").references(() => transactions.id), // Reference to transaction
+  amount: integer("amount").notNull(),
+  allocatedAt: timestamp("allocated_at").defaultNow(),
+  notes: text("notes"),
+});
+
+export const insertGoalAllocationSchema = createInsertSchema(goalAllocations).omit({
+  id: true,
+  allocatedAt: true,
+});
+
+export type GoalAllocationDB = typeof goalAllocations.$inferSelect;
+export type InsertGoalAllocation = z.infer<typeof insertGoalAllocationSchema>;
+
+// ============================================================================
+// Module 11: Automation Features Tables
+// ============================================================================
+
+// Auto-Invest Rules table
+export const autoInvestRules = pgTable("auto_invest_rules", {
+  id: text("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  schemeId: integer("scheme_id").references(() => products.id).notNull(),
+  schemeName: text("scheme_name").notNull(),
+  amount: integer("amount").notNull(),
+  frequency: text("frequency").notNull(), // Daily, Weekly, Monthly, Quarterly
+  triggerType: text("trigger_type").notNull(), // Date, Goal Progress, Portfolio Drift, Market Condition
+  triggerConfig: jsonb("trigger_config").default({}), // JSON configuration
+  goalId: text("goal_id").references(() => goals.id),
+  goalName: text("goal_name"),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date"),
+  nextExecutionDate: date("next_execution_date"),
+  status: text("status").default("Active"), // Active, Paused, Cancelled, Completed
+  isEnabled: boolean("is_enabled").default(true),
+  maxTotalAmount: integer("max_total_amount"),
+  maxPerExecution: integer("max_per_execution"),
+  minBalanceRequired: integer("min_balance_required"),
+  createdBy: integer("created_by").references(() => users.id).notNull(),
+  executionCount: integer("execution_count").default(0),
+  lastExecutionDate: timestamp("last_execution_date"),
+  lastExecutionStatus: text("last_execution_status"), // Success, Failed
+  lastExecutionError: text("last_execution_error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at"),
+});
+
+export const insertAutoInvestRuleSchema = createInsertSchema(autoInvestRules).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type AutoInvestRuleDB = typeof autoInvestRules.$inferSelect;
+export type InsertAutoInvestRule = z.infer<typeof insertAutoInvestRuleSchema>;
+
+// Rebalancing Rules table
+export const rebalancingRules = pgTable("rebalancing_rules", {
+  id: text("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  strategy: text("strategy").notNull(), // Threshold-Based, Time-Based, Drift-Based, Hybrid
+  targetAllocation: jsonb("target_allocation").notNull(), // JSON object with allocation percentages
+  thresholdPercent: doublePrecision("threshold_percent").notNull(),
+  rebalanceAmount: integer("rebalance_amount"),
+  frequency: text("frequency"), // Daily, Weekly, Monthly, Quarterly
+  dayOfMonth: integer("day_of_month"),
+  dayOfWeek: integer("day_of_week"),
+  triggerOnDrift: boolean("trigger_on_drift").default(true),
+  triggerOnSchedule: boolean("trigger_on_schedule").default(false),
+  minDriftPercent: doublePrecision("min_drift_percent"),
+  executeAutomatically: boolean("execute_automatically").default(false),
+  requireConfirmation: boolean("require_confirmation").default(true),
+  status: text("status").default("Active"), // Active, Paused, Completed
+  isEnabled: boolean("is_enabled").default(true),
+  lastRebalancedDate: date("last_rebalanced_date"),
+  nextRebalancingDate: date("next_rebalancing_date"),
+  executionCount: integer("execution_count").default(0),
+  lastExecutionStatus: text("last_execution_status"), // Success, Failed, Skipped
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at"),
+});
+
+export const insertRebalancingRuleSchema = createInsertSchema(rebalancingRules).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type RebalancingRuleDB = typeof rebalancingRules.$inferSelect;
+export type InsertRebalancingRule = z.infer<typeof insertRebalancingRuleSchema>;
+
+// Rebalancing Executions table
+export const rebalancingExecutions = pgTable("rebalancing_executions", {
+  id: text("id").primaryKey(),
+  ruleId: text("rule_id").references(() => rebalancingRules.id).notNull(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  executionDate: date("execution_date").notNull(),
+  status: text("status").notNull(), // Pending, Executed, Failed, Cancelled
+  currentAllocation: jsonb("current_allocation").notNull(),
+  targetAllocation: jsonb("target_allocation").notNull(),
+  driftPercent: doublePrecision("drift_percent").notNull(),
+  actions: jsonb("actions").default([]), // Array of rebalancing actions
+  executedAt: timestamp("executed_at"),
+  executedBy: integer("executed_by").references(() => users.id),
+  orderIds: jsonb("order_ids").default([]), // Array of order IDs created
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRebalancingExecutionSchema = createInsertSchema(rebalancingExecutions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type RebalancingExecutionDB = typeof rebalancingExecutions.$inferSelect;
+export type InsertRebalancingExecution = z.infer<typeof insertRebalancingExecutionSchema>;
+
+// Trigger Orders table
+export const triggerOrders = pgTable("trigger_orders", {
+  id: text("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  triggerType: text("trigger_type").notNull(), // Price, NAV, Portfolio Value, Goal Progress, Date, Custom
+  triggerCondition: text("trigger_condition").notNull(), // Greater Than, Less Than, Equals, Crosses Above, Crosses Below
+  triggerValue: doublePrecision("trigger_value").notNull(),
+  triggerField: text("trigger_field"), // e.g., 'nav', 'portfolioValue', 'goalProgress'
+  orderType: text("order_type").notNull(), // Purchase, Redemption, Switch
+  schemeId: integer("scheme_id").references(() => products.id).notNull(),
+  schemeName: text("scheme_name").notNull(),
+  amount: integer("amount"),
+  units: doublePrecision("units"),
+  targetSchemeId: integer("target_scheme_id").references(() => products.id),
+  targetSchemeName: text("target_scheme_name"),
+  goalId: text("goal_id").references(() => goals.id),
+  goalName: text("goal_name"),
+  validFrom: date("valid_from").notNull(),
+  validUntil: date("valid_until"),
+  status: text("status").default("Active"), // Active, Triggered, Executed, Cancelled, Expired
+  isEnabled: boolean("is_enabled").default(true),
+  triggeredAt: timestamp("triggered_at"),
+  executedAt: timestamp("executed_at"),
+  executedOrderId: text("executed_order_id"),
+  executionStatus: text("execution_status"), // Success, Failed
+  executionError: text("execution_error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at"),
+  createdBy: integer("created_by").references(() => users.id).notNull(),
+});
+
+export const insertTriggerOrderSchema = createInsertSchema(triggerOrders).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type TriggerOrderDB = typeof triggerOrders.$inferSelect;
+export type InsertTriggerOrder = z.infer<typeof insertTriggerOrderSchema>;
+
+// Notification Preferences table
+export const notificationPreferences = pgTable("notification_preferences", {
+  id: text("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  userId: integer("user_id").references(() => users.id), // Optional: user-level preferences
+  event: text("event").notNull(), // Order Submitted, Order Executed, etc.
+  channels: jsonb("channels").notNull().default([]), // Array of channels: Email, SMS, Push, In-App
+  enabled: boolean("enabled").default(true),
+  quietHours: jsonb("quiet_hours"), // { start: "22:00", end: "08:00" }
+  minAmount: integer("min_amount"), // Only notify if amount >= this
+  schemes: jsonb("schemes").default([]), // Array of scheme IDs to filter
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at"),
+});
+
+export const insertNotificationPreferenceSchema = createInsertSchema(notificationPreferences).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type NotificationPreferenceDB = typeof notificationPreferences.$inferSelect;
+export type InsertNotificationPreference = z.infer<typeof insertNotificationPreferenceSchema>;
+
+// Notification Logs table
+export const notificationLogs = pgTable("notification_logs", {
+  id: text("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  userId: integer("user_id").references(() => users.id),
+  event: text("event").notNull(),
+  channel: text("channel").notNull(), // Email, SMS, Push, In-App
+  status: text("status").notNull(), // Sent, Failed, Pending
+  sentAt: timestamp("sent_at"),
+  error: text("error"),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertNotificationLogSchema = createInsertSchema(notificationLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type NotificationLogDB = typeof notificationLogs.$inferSelect;
+export type InsertNotificationLog = z.infer<typeof insertNotificationLogSchema>;
+
+// In-App Notifications table
+export const inAppNotifications = pgTable("in_app_notifications", {
+  id: text("id").primaryKey(),
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  event: text("event").notNull(),
+  subject: text("subject").notNull(),
+  message: text("message").notNull(),
+  metadata: jsonb("metadata").default({}),
+  read: boolean("read").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertInAppNotificationSchema = createInsertSchema(inAppNotifications).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InAppNotificationDB = typeof inAppNotifications.$inferSelect;
+export type InsertInAppNotification = z.infer<typeof insertInAppNotificationSchema>;
+
+// Automation Execution Logs table
+export const automationExecutionLogs = pgTable("automation_execution_logs", {
+  id: text("id").primaryKey(),
+  automationType: text("automation_type").notNull(), // AutoInvest, Rebalancing, TriggerOrder
+  automationId: text("automation_id").notNull(), // ID of the rule/order
+  clientId: integer("client_id").references(() => clients.id).notNull(),
+  executionDate: date("execution_date").notNull(),
+  status: text("status").notNull(), // Success, Failed, Skipped
+  orderId: text("order_id"), // Order ID if order was created
+  error: text("error"),
+  details: jsonb("details").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutomationExecutionLogSchema = createInsertSchema(automationExecutionLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type AutomationExecutionLogDB = typeof automationExecutionLogs.$inferSelect;
+export type InsertAutomationExecutionLog = z.infer<typeof insertAutomationExecutionLogSchema>;

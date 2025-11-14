@@ -12,7 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { CartItem } from '../../types/order.types';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { CartItem, TransactionType, OrderType } from '../../types/order.types';
 
 interface OrderInfoOverlayProps {
   cartItem: CartItem;
@@ -28,6 +29,8 @@ export default function OrderInfoOverlay({
   onUpdate 
 }: OrderInfoOverlayProps) {
   const [formData, setFormData] = useState({
+    transactionType: cartItem.transactionType,
+    orderType: cartItem.orderType || 'Initial Purchase' as OrderType,
     amount: cartItem.amount,
     units: cartItem.units || 0,
     settlementAccount: cartItem.settlementAccount || '',
@@ -40,6 +43,8 @@ export default function OrderInfoOverlay({
   React.useEffect(() => {
     if (open && cartItem) {
       setFormData({
+        transactionType: cartItem.transactionType,
+        orderType: cartItem.orderType || 'Initial Purchase' as OrderType,
         amount: cartItem.amount,
         units: cartItem.units || 0,
         settlementAccount: cartItem.settlementAccount || '',
@@ -67,13 +72,41 @@ export default function OrderInfoOverlay({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="transaction-type">Transaction Type</Label>
-              <Input
-                id="transaction-type"
-                value={cartItem.transactionType}
-                disabled
-                className="bg-muted"
-              />
+              <Select
+                value={formData.transactionType}
+                onValueChange={(value) => setFormData({ ...formData, transactionType: value as TransactionType })}
+              >
+                <SelectTrigger id="transaction-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Purchase">Purchase</SelectItem>
+                  <SelectItem value="Redemption">Redemption</SelectItem>
+                  <SelectItem value="Switch">Switch</SelectItem>
+                  <SelectItem value="Full Redemption">Full Redemption</SelectItem>
+                  <SelectItem value="Full Switch">Full Switch</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+
+            {/* Order Type for Purchase transactions */}
+            {formData.transactionType === 'Purchase' && (
+              <div className="space-y-2">
+                <Label htmlFor="order-type">Order Type</Label>
+                <Select
+                  value={formData.orderType}
+                  onValueChange={(value) => setFormData({ ...formData, orderType: value as OrderType })}
+                >
+                  <SelectTrigger id="order-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Initial Purchase">Initial Purchase</SelectItem>
+                    <SelectItem value="Additional Purchase">Additional Purchase</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="amount">

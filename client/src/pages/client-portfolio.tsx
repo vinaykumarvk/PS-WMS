@@ -962,6 +962,13 @@ export default function ClientPortfolioPage() {
             <Lightbulb className="h-6 w-6 text-muted-foreground" />
           </button>
           
+          <button 
+            className="flex items-center justify-center px-1 py-2 rounded-lg hover:bg-muted transition-colors h-12 w-full"
+            onClick={() => window.location.hash = `/clients/${clientId}/goals`}
+            title="Goals"
+          >
+            <Target className="h-6 w-6 text-muted-foreground" />
+          </button>
 
         </div>
       </div>

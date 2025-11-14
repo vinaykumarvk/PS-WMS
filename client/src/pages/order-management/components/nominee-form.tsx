@@ -119,14 +119,16 @@ export default function NomineeForm({ value, onChange, optOut, onOptOutChange }:
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center space-x-2">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex items-center space-x-2 sm:space-x-3 min-h-[44px] touch-manipulation">
         <Checkbox
           id="opt-out"
           checked={optOut}
           onCheckedChange={onOptOutChange}
+          className="h-5 w-5"
+          aria-label="Opt out of nomination"
         />
-        <Label htmlFor="opt-out" className="cursor-pointer">
+        <Label htmlFor="opt-out" className="cursor-pointer text-sm sm:text-base">
           Opt out of nomination
         </Label>
       </div>
@@ -152,10 +154,10 @@ export default function NomineeForm({ value, onChange, optOut, onOptOutChange }:
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor={`${nominee.id}-name`}>
-                        Name <span className="text-destructive">*</span>
+                      <Label htmlFor={`${nominee.id}-name`} className="text-sm sm:text-base">
+                        Name <span className="text-destructive" aria-label="required">*</span>
                       </Label>
                       <Input
                         id={`${nominee.id}-name`}
@@ -163,12 +165,13 @@ export default function NomineeForm({ value, onChange, optOut, onOptOutChange }:
                         onChange={(e) => updateNominee(nominee.id, { name: e.target.value })}
                         aria-required="true"
                         aria-invalid={!nominee.name ? 'true' : 'false'}
+                        className="min-h-[44px] text-base sm:text-sm"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={`${nominee.id}-relationship`}>
-                        Relationship <span className="text-destructive">*</span>
+                      <Label htmlFor={`${nominee.id}-relationship`} className="text-sm sm:text-base">
+                        Relationship <span className="text-destructive" aria-label="required">*</span>
                       </Label>
                       <Input
                         id={`${nominee.id}-relationship`}
@@ -176,12 +179,13 @@ export default function NomineeForm({ value, onChange, optOut, onOptOutChange }:
                         onChange={(e) => updateNominee(nominee.id, { relationship: e.target.value })}
                         aria-required="true"
                         aria-invalid={!nominee.relationship ? 'true' : 'false'}
+                        className="min-h-[44px] text-base sm:text-sm"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={`${nominee.id}-dob`}>
-                        Date of Birth <span className="text-destructive">*</span>
+                      <Label htmlFor={`${nominee.id}-dob`} className="text-sm sm:text-base">
+                        Date of Birth <span className="text-destructive" aria-label="required">*</span>
                       </Label>
                       <Input
                         id={`${nominee.id}-dob`}
@@ -190,12 +194,13 @@ export default function NomineeForm({ value, onChange, optOut, onOptOutChange }:
                         onChange={(e) => updateNominee(nominee.id, { dateOfBirth: e.target.value })}
                         aria-required="true"
                         aria-invalid={!nominee.dateOfBirth ? 'true' : 'false'}
+                        className="min-h-[44px] text-base sm:text-sm"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={`${nominee.id}-pan`}>
-                        PAN <span className="text-destructive">*</span>
+                      <Label htmlFor={`${nominee.id}-pan`} className="text-sm sm:text-base">
+                        PAN <span className="text-destructive" aria-label="required">*</span>
                       </Label>
                       <Input
                         id={`${nominee.id}-pan`}
@@ -205,17 +210,18 @@ export default function NomineeForm({ value, onChange, optOut, onOptOutChange }:
                         aria-required="true"
                         aria-invalid={errors[`${nominee.id}-pan`] ? 'true' : 'false'}
                         aria-describedby={errors[`${nominee.id}-pan`] ? `${nominee.id}-pan-error` : undefined}
+                        className="min-h-[44px] text-base sm:text-sm uppercase"
                       />
                       {errors[`${nominee.id}-pan`] && (
-                        <p id={`${nominee.id}-pan-error`} className="text-sm text-destructive mt-1" role="alert">
+                        <p id={`${nominee.id}-pan-error`} className="text-xs sm:text-sm text-destructive mt-1" role="alert">
                           {errors[`${nominee.id}-pan`]}
                         </p>
                       )}
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={`${nominee.id}-percentage`}>
-                        Percentage <span className="text-destructive">*</span>
+                      <Label htmlFor={`${nominee.id}-percentage`} className="text-sm sm:text-base">
+                        Percentage <span className="text-destructive" aria-label="required">*</span>
                       </Label>
                       <Input
                         id={`${nominee.id}-percentage`}
@@ -228,6 +234,7 @@ export default function NomineeForm({ value, onChange, optOut, onOptOutChange }:
                         aria-required="true"
                         aria-invalid={errors.percentage ? 'true' : 'false'}
                         aria-describedby={errors.percentage ? 'percentage-error' : undefined}
+                        className="min-h-[44px] text-base sm:text-sm"
                       />
                     </div>
                   </div>
@@ -302,8 +309,13 @@ export default function NomineeForm({ value, onChange, optOut, onOptOutChange }:
             </div>
           )}
 
-          <Button onClick={addNominee} variant="outline">
-            <Plus className="h-4 w-4 mr-2" />
+          <Button 
+            onClick={addNominee} 
+            variant="outline"
+            className="min-h-[44px] touch-manipulation w-full sm:w-auto"
+            aria-label="Add another nominee"
+          >
+            <Plus className="h-4 w-4 mr-2 flex-shrink-0" aria-hidden="true" />
             Add Nominee
           </Button>
         </>
