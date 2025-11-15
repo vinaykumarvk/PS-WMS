@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useAuth } from "@/context/auth-context";
+import { useUserPreferences } from "@/context/preferences-context";
 import { useQuery } from "@tanstack/react-query";
 import { ActionItemsPriorities } from "@/components/dashboard/action-items-priorities";
 import { TalkingPointsCard } from "@/components/dashboard/talking-points-card";
@@ -12,21 +13,33 @@ import { OpportunityHighlights } from "@/components/dashboard/opportunity-highli
 import { RelationshipInsights } from "@/components/dashboard/relationship-insights";
 import { ScenarioToggles } from "@/components/dashboard/scenario-toggles";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
-import { useI18n } from "@/hooks/use-i18n";
 import { FadeIn, PageTransition } from "@/components/animations";
-import { 
+import {
   BusinessSnapshotSkeleton,
-  ActionItemsSkeleton, 
-  TalkingPointsSkeleton, 
-  AnnouncementsSkeleton, 
-  PerformanceSkeleton 
+  ActionItemsSkeleton,
+  TalkingPointsSkeleton,
+  AnnouncementsSkeleton,
+  PerformanceSkeleton
 } from "@/components/ui/dashboard-skeleton";
+import { GenerativeBriefingCard } from "@/components/dashboard/generative-briefing-card";
+import { useActionItemOrchestration } from "@/services/action-item-orchestrator";
+import { useDashboardBriefing } from "@/services/dashboard-briefing";
 
 import { format } from "date-fns";
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { t } = useI18n();
+  const { preferences } = useUserPreferences();
+  const {
+    data: actionItems,
+    isLoading: actionItemsLoading,
+    refetch: refetchActionItems
+  } = useActionItemOrchestration();
+  const {
+    data: briefing,
+    isLoading: briefingLoading,
+    refetch: refetchBriefing
+  } = useDashboardBriefing(preferences);
   
   // Set page title
   useEffect(() => {
@@ -38,18 +51,6 @@ export default function Dashboard() {
     queryKey: ['/api/business-metrics/1'],
     staleTime: 0,
     refetchOnMount: true
-  });
-
-  const { isLoading: tasksLoading } = useQuery({
-    queryKey: ['/api/tasks']
-  });
-
-  const { isLoading: talkingPointsLoading } = useQuery({
-    queryKey: ['/api/talking-points']
-  });
-
-  const { isLoading: announcementsLoading } = useQuery({
-    queryKey: ['/api/announcements']
   });
 
   const { isLoading: performanceLoading } = useQuery({
@@ -74,6 +75,35 @@ export default function Dashboard() {
   });
 
   // Show skeleton loading until all critical data is loaded
+  const isLoading = businessMetricsLoading || performanceLoading || actionItemsLoading || briefingLoading;
+
+  const firstName = useMemo(() => user?.fullName.split(' ')[0] ?? 'there', [user?.fullName]);
+  const greetingLine = useMemo(() => {
+    switch (preferences.tone) {
+      case 'friendly':
+        return `Hey ${firstName}!`;
+      case 'direct':
+        return `${firstName}, let's get to it.`;
+      default:
+        return `Good day, ${firstName}`;
+    }
+  }, [firstName, preferences.tone]);
+
+  const depthDescriptor = useMemo(() => {
+    switch (preferences.depth) {
+      case 'concise':
+        return 'Quick snapshot curated to keep you on the front foot.';
+      case 'comprehensive':
+        return 'Expanded intelligence assembled for a deep dive across your book.';
+      default:
+        return 'Balanced briefing tuned for your daily rhythm.';
+    }
+  }, [preferences.depth]);
+
+  const handleBriefingRefresh = () => {
+    refetchBriefing();
+    refetchActionItems();
+  };
   const isLoading = businessMetricsLoading || tasksLoading || talkingPointsLoading || 
     announcementsLoading || performanceLoading || appointmentsLoading || alertsLoading || 
     prospectsLoading || clientsLoading;
@@ -123,12 +153,17 @@ export default function Dashboard() {
           <FadeIn direction="down" delay={0} duration={500}>
             <div className="space-y-2">
               <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-foreground leading-tight tracking-tight">
-                {t("common.welcome")} back, <span className="text-primary font-extrabold">{user?.fullName.split(' ')[0]}</span>
+                {greetingLine}
               </h1>
-              <div className="flex items-center justify-between">
-                <p className="text-muted-foreground text-sm sm:text-base lg:text-lg font-medium leading-relaxed">
-                  {format(new Date(), "EEEE, MMMM d, yyyy")}
-                </p>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-muted-foreground text-sm sm:text-base lg:text-lg font-medium leading-relaxed">
+                    {format(new Date(), "EEEE, MMMM d, yyyy")}
+                  </p>
+                  <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                    {depthDescriptor}
+                  </p>
+                </div>
                 <div className="transition-transform duration-200 hover:scale-105">
                   <ThemeToggle />
                 </div>
@@ -136,6 +171,22 @@ export default function Dashboard() {
             </div>
           </FadeIn>
 
+          <div className="animate-in fade-in duration-500 delay-200">
+            <GenerativeBriefingCard
+              briefing={briefing}
+              isLoading={briefingLoading}
+              onRefresh={handleBriefingRefresh}
+            />
+          </div>
+
+        {/* Enhanced Responsive Grid Layout with Better Spacing */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8 xl:gap-10">
+          {/* Action Items Section - Optimized proportions with enhanced animation */}
+          <div className="lg:col-span-5 xl:col-span-4 animate-in slide-in-from-left-4 duration-700 delay-300">
+            <div className="transition-all duration-300 hover:scale-[1.02] hover:shadow-lg">
+              <ActionItemsPriorities data={actionItems} isLoading={actionItemsLoading} />
+            </div>
+          </div>
           {/* NEW NARRATIVE LAYOUT: RM's Daily Storyline */}
           
           {/* 1. Top Ribbon: Goals vs Actuals */}

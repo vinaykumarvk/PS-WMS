@@ -3,25 +3,40 @@
  * Comprehensive analytics dashboard with order analytics, performance metrics, and client insights
  */
 
-import { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useEffect, useMemo, useState } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { CalendarIcon, Filter, BarChart3, TrendingUp, Users, Download } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { CalendarIcon, Filter, BarChart3, TrendingUp, Users, Download, MessageSquare, Bot, Send } from 'lucide-react';
 import { useOrderAnalytics, usePerformanceMetrics, useClientInsights, AnalyticsFilters } from './analytics/hooks/use-analytics';
 import { OrderAnalyticsComponent } from './analytics/components/order-analytics';
 import { PerformanceMetricsComponent } from './analytics/components/performance-metrics';
 import { ClientInsightsComponent } from './analytics/components/client-insights';
 import { ExportOptionsComponent } from './analytics/components/export-options';
 
+interface AgentMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export default function AnalyticsDashboard() {
   const [filters, setFilters] = useState<AnalyticsFilters>({
     startDate: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
   });
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentInput, setAgentInput] = useState('');
+  const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([
+    {
+      role: 'assistant',
+      content: 'Hi! I can dig into your analytics. Ask about AUM, revenue, conversion, or top clients to get tailored insights.'
+    }
+  ]);
 
   const { data: orderAnalytics, isLoading: ordersLoading } = useOrderAnalytics(filters);
   const { data: performanceMetrics, isLoading: performanceLoading } = usePerformanceMetrics(filters);
@@ -30,6 +45,16 @@ export default function AnalyticsDashboard() {
   useEffect(() => {
     document.title = 'Analytics Dashboard | Wealth RM';
   }, []);
+
+  const currencyFormatter = useMemo(() => new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }), []);
+  const percentFormatter = useMemo(() => new Intl.NumberFormat('en-IN', {
+    style: 'percent',
+    minimumFractionDigits: 1,
+  }), []);
 
   const handleDateRangeChange = (range: '7d' | '30d' | '90d' | '1y' | 'custom') => {
     const today = new Date();
@@ -60,6 +85,56 @@ export default function AnalyticsDashboard() {
   };
 
   const isLoading = ordersLoading || performanceLoading || clientsLoading;
+
+  const generateAgentResponse = (question: string) => {
+    const lower = question.toLowerCase();
+    const responses: string[] = [];
+
+    if (!orderAnalytics || !performanceMetrics || !clientInsights) {
+      return 'Analytics are still loading. Try again once the dashboard metrics finish syncing.';
+    }
+
+    if (lower.includes('aum') || lower.includes('assets')) {
+      responses.push(`Total AUM stands at ${currencyFormatter.format(performanceMetrics.totalAUM)} with ${percentFormatter.format(performanceMetrics.growthMetrics.aumGrowth / 100)} change versus the prior period.`);
+    }
+
+    if (lower.includes('revenue')) {
+      responses.push(`Revenue is tracking at ${currencyFormatter.format(performanceMetrics.totalRevenue)}, ${performanceMetrics.growthMetrics.revenueGrowth >= 0 ? 'up' : 'down'} ${Math.abs(performanceMetrics.growthMetrics.revenueGrowth).toFixed(1)}% period over period.`);
+    }
+
+    if (lower.includes('order') || lower.includes('conversion')) {
+      responses.push(`You have processed ${orderAnalytics.totalOrders.toLocaleString('en-IN')} orders with an average value of ${currencyFormatter.format(performanceMetrics.averageOrderValue)} and a success rate of ${percentFormatter.format(performanceMetrics.orderSuccessRate / 100)}.`);
+    }
+
+    if (lower.includes('retention') || lower.includes('loyalty')) {
+      responses.push(`Client retention is holding at ${percentFormatter.format(clientInsights.clientRetentionRate / 100)} with ${clientInsights.newClients.toLocaleString('en-IN')} new clients this period.`);
+    }
+
+    if (lower.includes('top client') || lower.includes('top-client') || lower.includes('top accounts')) {
+      const leader = orderAnalytics.topClients?.[0];
+      if (leader) {
+        responses.push(`Top client: ${leader.clientName} with ${leader.orderCount} orders totalling ${currencyFormatter.format(leader.totalValue)}.`);
+      }
+    }
+
+    if (!responses.length) {
+      responses.push(`Overall, AUM is ${currencyFormatter.format(performanceMetrics.totalAUM)}, revenue is ${currencyFormatter.format(performanceMetrics.totalRevenue)}, and retention is ${percentFormatter.format(clientInsights.clientRetentionRate / 100)}. Ask about AUM, revenue, retention, or top clients for specifics.`);
+    }
+
+    return responses.join(' ');
+  };
+
+  const handleAgentSubmit = () => {
+    const prompt = agentInput.trim();
+    if (!prompt) return;
+    const response = generateAgentResponse(prompt);
+    setAgentMessages((prev) => [
+      ...prev,
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: response }
+    ]);
+    setAgentInput('');
+  };
 
   return (
     <div className="min-h-screen bg-background transition-colors duration-300">
@@ -185,6 +260,27 @@ export default function AnalyticsDashboard() {
           </CardContent>
         </Card>
 
+        <Card className="mb-6 animate-in slide-in-from-bottom-4 duration-700 delay-250">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5" />
+              Analytics Assistant
+            </CardTitle>
+            <CardDescription>
+              Ask a question and the assistant will reference live analytics data.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground flex-1">
+              Curious about AUM momentum, revenue, or client retention? Launch the conversational agent to query the data directly.
+            </p>
+            <Button variant="outline" className="gap-2" onClick={() => setAgentOpen(true)}>
+              <Bot className="h-4 w-4" />
+              Open Assistant
+            </Button>
+          </CardContent>
+        </Card>
+
         {/* Analytics Tabs */}
         <Tabs defaultValue="orders" className="space-y-6 animate-in slide-in-from-bottom-4 duration-700 delay-300">
           <TabsList className="bg-muted/50 border border-border/50 rounded-xl p-1 h-auto shadow-sm hover:shadow-md transition-all duration-300">
@@ -226,6 +322,56 @@ export default function AnalyticsDashboard() {
             <ClientInsightsComponent data={clientInsights} isLoading={clientsLoading} />
           </TabsContent>
         </Tabs>
+        <Dialog open={agentOpen} onOpenChange={setAgentOpen}>
+          <DialogContent className="sm:max-w-xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Bot className="h-4 w-4" /> Analytics Assistant
+              </DialogTitle>
+              <DialogDescription>
+                Responses are generated from the current analytics data set.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-72 overflow-y-auto space-y-3 py-2">
+              {agentMessages.map((message, idx) => (
+                <div key={idx} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-[85%] rounded-lg border px-3 py-2 text-sm leading-relaxed ${
+                      message.role === 'user'
+                        ? 'bg-primary text-primary-foreground border-primary/80'
+                        : 'bg-muted text-foreground border-border'
+                    }`}
+                  >
+                    {message.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex items-end gap-2">
+              <Textarea
+                value={agentInput}
+                onChange={(event) => setAgentInput(event.target.value)}
+                rows={3}
+                placeholder="Ask about AUM growth, revenue trends, or retention."
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    handleAgentSubmit();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                onClick={handleAgentSubmit}
+                disabled={!agentInput.trim()}
+                className="h-10 gap-2"
+              >
+                <Send className="h-4 w-4" />
+                Send
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

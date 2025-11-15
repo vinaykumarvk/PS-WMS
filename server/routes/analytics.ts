@@ -4,7 +4,7 @@
  */
 
 import { Router, type Request, Response } from 'express';
-import { getOrderAnalytics, getPerformanceMetrics, getClientInsights } from '../services/analytics-service';
+import { getOrderAnalytics, getPerformanceMetrics, getClientInsights, getAnalyticsSnapshots } from '../services/analytics-service';
 
 const router = Router();
 
@@ -96,6 +96,21 @@ router.get('/clients', async (req: AuthenticatedRequest, res: Response) => {
   } catch (error: any) {
     console.error('Client insights error:', error);
     res.status(500).json({ error: error.message || 'Failed to get client insights' });
+  }
+});
+
+router.get('/snapshots', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.session?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const snapshot = await getAnalyticsSnapshots(userId);
+    res.json(snapshot);
+  } catch (error: any) {
+    console.error('Analytics snapshot error:', error);
+    res.status(500).json({ error: error.message || 'Failed to get analytics snapshot' });
   }
 });
 

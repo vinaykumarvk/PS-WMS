@@ -90,3 +90,16 @@ export interface PortfolioPerformance {
   sinceInception?: number;
 }
 
+export interface PortfolioDelta {
+  id: number;
+  clientName: string;
+  deltaType: 'allocation-drift' | 'cash-drift' | 'performance' | 'risk';
+  deltaValue: number;
+  direction: 'up' | 'down';
+  impact: 'critical' | 'high' | 'moderate' | 'low';
+  summary: string;
+  timeframe: string;
+  assignedTo?: number;
+  lastUpdated: string;
+}
+

@@ -79,6 +79,30 @@ export interface AnalyticsFilters {
   transactionType?: string;
 }
 
+export interface AnalyticsSnapshotMetric {
+  key: string;
+  label: string;
+  value: number;
+  change: number;
+  direction: 'up' | 'down' | 'flat';
+}
+
+export interface AnalyticsSnapshotResponse {
+  generatedAt: string;
+  metrics: AnalyticsSnapshotMetric[];
+  clientSummary: {
+    totalClients: number;
+    newClients: number;
+    retentionRate: number;
+  };
+  revenueSummary: {
+    totalRevenue: number;
+    averageOrderValue: number;
+    orderSuccessRate: number;
+  };
+  topClients: Array<{ clientId: number; clientName: string; totalValue: number; orderCount: number }>;
+}
+
 // ============================================================================
 // Order Analytics
 // ============================================================================
@@ -649,5 +673,67 @@ export async function getClientInsights(
     console.error('Get client insights error:', error);
     throw new Error(`Failed to get client insights: ${error.message}`);
   }
+}
+
+/**
+ * Get compact analytics snapshots for generative briefings
+ */
+export async function getAnalyticsSnapshots(userId: number): Promise<AnalyticsSnapshotResponse> {
+  const directionFor = (value: number): 'up' | 'down' | 'flat' => {
+    if (value > 0) return 'up';
+    if (value < 0) return 'down';
+    return 'flat';
+  };
+
+  const [performance, orders, clients] = await Promise.all([
+    getPerformanceMetrics(userId, {}),
+    getOrderAnalytics(userId, {}),
+    getClientInsights(userId, {}),
+  ]);
+
+  const metrics: AnalyticsSnapshotMetric[] = [
+    {
+      key: 'aum',
+      label: 'Total AUM',
+      value: performance.totalAUM,
+      change: performance.growthMetrics.aumGrowth,
+      direction: directionFor(performance.growthMetrics.aumGrowth),
+    },
+    {
+      key: 'revenue',
+      label: 'Revenue',
+      value: performance.totalRevenue,
+      change: performance.growthMetrics.revenueGrowth,
+      direction: directionFor(performance.growthMetrics.revenueGrowth),
+    },
+    {
+      key: 'orders',
+      label: 'Orders',
+      value: performance.totalOrders,
+      change: performance.growthMetrics.orderGrowth,
+      direction: directionFor(performance.growthMetrics.orderGrowth),
+    },
+  ];
+
+  return {
+    generatedAt: new Date().toISOString(),
+    metrics,
+    clientSummary: {
+      totalClients: clients.totalClients,
+      newClients: clients.newClients,
+      retentionRate: clients.clientRetentionRate,
+    },
+    revenueSummary: {
+      totalRevenue: performance.totalRevenue,
+      averageOrderValue: performance.averageOrderValue,
+      orderSuccessRate: performance.orderSuccessRate,
+    },
+    topClients: orders.topClients.slice(0, 3).map((client) => ({
+      clientId: client.clientId,
+      clientName: client.clientName,
+      totalValue: client.totalValue,
+      orderCount: client.orderCount,
+    })),
+  };
 }
 

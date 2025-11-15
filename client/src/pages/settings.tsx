@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/context/auth-context";
+import { useUserPreferences } from "@/context/preferences-context";
 import { useTheme } from "@/components/ui/theme-provider";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,6 +18,7 @@ export default function Settings() {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const { toast } = useToast();
+  const { preferences: briefingPreferences, updatePreferences: updateBriefingPreferences } = useUserPreferences();
   const [activeTab, setActiveTab] = useState("profile");
   const [showPassword, setShowPassword] = useState(false);
   
@@ -408,7 +410,7 @@ export default function Settings() {
             <CardContent className="space-y-6">
               <div className="space-y-4">
                 <h3 className="text-sm font-medium text-foreground">Theme</h3>
-                <RadioGroup 
+                <RadioGroup
                   value={displaySettings.theme}
                   onValueChange={(value) => setDisplaySettings({...displaySettings, theme: value})}
                   className="flex space-x-2"
@@ -433,31 +435,31 @@ export default function Settings() {
                   </div>
                 </RadioGroup>
               </div>
-              
+
               <Separator />
-              
+
               <div className="space-y-4">
                 <h3 className="text-lg font-medium text-foreground">Interface Options</h3>
                 <div className="flex items-center justify-between">
                   <Label htmlFor="compactView" className="text-sm">Compact View</Label>
-                  <Switch 
-                    id="compactView" 
+                  <Switch
+                    id="compactView"
                     checked={displaySettings.compactView}
                     onCheckedChange={(checked) => setDisplaySettings({...displaySettings, compactView: checked})}
                   />
                 </div>
                 <div className="flex items-center justify-between">
                   <Label htmlFor="highContrastMode" className="text-sm">High Contrast Mode</Label>
-                  <Switch 
-                    id="highContrastMode" 
+                  <Switch
+                    id="highContrastMode"
                     checked={displaySettings.highContrastMode}
                     onCheckedChange={(checked) => setDisplaySettings({...displaySettings, highContrastMode: checked})}
                   />
                 </div>
                 <div className="flex items-center justify-between">
                   <Label htmlFor="largeText" className="text-sm">Large Text</Label>
-                  <Switch 
-                    id="largeText" 
+                  <Switch
+                    id="largeText"
                     checked={displaySettings.largeText}
                     onCheckedChange={(checked) => setDisplaySettings({...displaySettings, largeText: checked})}
                   />
@@ -467,6 +469,80 @@ export default function Settings() {
             <CardFooter className="flex justify-end border-t px-6 py-4">
               <Button onClick={handleSaveDisplaySettings}>Save Settings</Button>
             </CardFooter>
+          </Card>
+
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>AI Briefing Preferences</CardTitle>
+              <CardDescription>
+                Tailor the tone and depth of your dashboard greeting and daily briefing.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-foreground">Greeting tone</h3>
+                <RadioGroup
+                  value={briefingPreferences.tone}
+                  onValueChange={(value) => updateBriefingPreferences({ tone: value as typeof briefingPreferences.tone })}
+                  className="grid gap-2 sm:grid-cols-3"
+                >
+                  <Label htmlFor="tone-professional" className="flex cursor-pointer items-center gap-2 rounded-lg border p-3">
+                    <RadioGroupItem id="tone-professional" value="professional" />
+                    <div>
+                      <p className="font-medium text-foreground">Professional</p>
+                      <p className="text-xs text-muted-foreground">Polished, client-ready messaging.</p>
+                    </div>
+                  </Label>
+                  <Label htmlFor="tone-friendly" className="flex cursor-pointer items-center gap-2 rounded-lg border p-3">
+                    <RadioGroupItem id="tone-friendly" value="friendly" />
+                    <div>
+                      <p className="font-medium text-foreground">Friendly</p>
+                      <p className="text-xs text-muted-foreground">Warm, conversational updates.</p>
+                    </div>
+                  </Label>
+                  <Label htmlFor="tone-direct" className="flex cursor-pointer items-center gap-2 rounded-lg border p-3">
+                    <RadioGroupItem id="tone-direct" value="direct" />
+                    <div>
+                      <p className="font-medium text-foreground">Direct</p>
+                      <p className="text-xs text-muted-foreground">Succinct and action oriented.</p>
+                    </div>
+                  </Label>
+                </RadioGroup>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-foreground">Briefing depth</h3>
+                <RadioGroup
+                  value={briefingPreferences.depth}
+                  onValueChange={(value) => updateBriefingPreferences({ depth: value as typeof briefingPreferences.depth })}
+                  className="grid gap-2 sm:grid-cols-3"
+                >
+                  <Label htmlFor="depth-concise" className="flex cursor-pointer items-center gap-2 rounded-lg border p-3">
+                    <RadioGroupItem id="depth-concise" value="concise" />
+                    <div>
+                      <p className="font-medium text-foreground">Concise</p>
+                      <p className="text-xs text-muted-foreground">Headline view for quick scans.</p>
+                    </div>
+                  </Label>
+                  <Label htmlFor="depth-standard" className="flex cursor-pointer items-center gap-2 rounded-lg border p-3">
+                    <RadioGroupItem id="depth-standard" value="standard" />
+                    <div>
+                      <p className="font-medium text-foreground">Standard</p>
+                      <p className="text-xs text-muted-foreground">Balanced briefing with context.</p>
+                    </div>
+                  </Label>
+                  <Label htmlFor="depth-comprehensive" className="flex cursor-pointer items-center gap-2 rounded-lg border p-3">
+                    <RadioGroupItem id="depth-comprehensive" value="comprehensive" />
+                    <div>
+                      <p className="font-medium text-foreground">Comprehensive</p>
+                      <p className="text-xs text-muted-foreground">Expanded insights and directives.</p>
+                    </div>
+                  </Label>
+                </RadioGroup>
+              </div>
+            </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
