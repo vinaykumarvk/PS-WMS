@@ -1,6 +1,7 @@
 // Export all API services for easy access
 export * from './clientApi';
 export * from './prospectApi';
+export * from './portfolioApi';
 
 // This file will grow as we add more API services
 

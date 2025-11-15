@@ -20,6 +20,8 @@ export interface PortfolioAllocation {
   others: number;
 }
 
+export type PortfolioChartAllocation = Record<string, number>;
+
 export interface TargetAllocation {
   equity: number;
   debt: number;
@@ -76,6 +78,45 @@ export interface Holding {
   gainLossPercent: number;
   purchaseDate: string;
   lastTransactionDate?: string;
+}
+
+export interface PortfolioAdviceAction {
+  label: string;
+  description: string;
+  impact?: string;
+  amount?: number;
+}
+
+export interface PortfolioAdviceItem {
+  id: string;
+  category: 'rebalance' | 'tax_loss';
+  title: string;
+  summary: string;
+  rationale: string;
+  generatedAt: string;
+  actions: PortfolioAdviceAction[];
+  metadata?: Record<string, any>;
+}
+
+export interface PortfolioScenarioRequest {
+  clientId?: number;
+  prompt: string;
+  baseAllocation: PortfolioChartAllocation;
+}
+
+export interface PortfolioScenarioAdjustment {
+  allocation?: PortfolioChartAllocation;
+  expectedReturnDelta?: number;
+  riskShift?: 'higher' | 'lower' | 'neutral';
+  confidence?: number;
+}
+
+export interface PortfolioScenarioResponse {
+  prompt: string;
+  summary: string;
+  adjustments: PortfolioScenarioAdjustment;
+  insights: string[];
+  detectedIntents: string[];
 }
 
 export interface PortfolioPerformance {
