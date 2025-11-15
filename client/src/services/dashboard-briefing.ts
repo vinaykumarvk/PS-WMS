@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
-import type { DashboardBriefing, DashboardBriefingMetric } from "@/types/dashboard";
+import type { AdviceFeedbackSummary, DashboardBriefing, DashboardBriefingMetric } from "@/types/dashboard";
 import type { BriefingPreferences } from "@/context/preferences-context";
 
 interface Announcement {
@@ -39,6 +39,19 @@ interface AnalyticsSnapshot {
   topClients: Array<{ clientId: number; clientName: string; totalValue: number; orderCount: number }>;
 }
 
+interface AdviceInteraction {
+  id: number;
+  action: string;
+  recommendation: string;
+  created_at?: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+interface AdviceInteractionSummary {
+  interactions: AdviceInteraction[];
+  summary: AdviceFeedbackSummary;
+}
+
 const currencyFormatter = new Intl.NumberFormat("en-IN", {
   style: "currency",
   currency: "INR",
@@ -52,13 +65,14 @@ const percentFormatter = new Intl.NumberFormat("en-IN", {
 });
 
 async function fetchBriefingInputs() {
-  const [announcements, talkingPoints, analytics] = await Promise.all([
+  const [announcements, talkingPoints, analytics, adviceFeedback] = await Promise.all([
     fetch("/api/announcements").then((res) => res.json() as Promise<Announcement[]>),
     fetch("/api/talking-points").then((res) => res.json() as Promise<TalkingPoint[]>),
     fetch("/api/analytics/snapshots").then((res) => res.json() as Promise<AnalyticsSnapshot>),
+    fetch("/api/ai-advice/interactions?limit=100").then((res) => res.json() as Promise<AdviceInteractionSummary>),
   ]);
 
-  return { announcements, talkingPoints, analytics };
+  return { announcements, talkingPoints, analytics, adviceFeedback };
 }
 
 function formatMetric(metric: AnalyticsSnapshot["metrics"][number]): DashboardBriefingMetric {
@@ -81,7 +95,8 @@ function buildSummary(
   announcements: Announcement[],
   talkingPoints: TalkingPoint[],
   analytics: AnalyticsSnapshot,
-  preferences: BriefingPreferences
+  preferences: BriefingPreferences,
+  adviceFeedback: AdviceInteractionSummary | undefined
 ): DashboardBriefing {
   const topAnnouncement = announcements?.[0];
   const latestTalkingPoint = talkingPoints?.find((point) => !point.auto_archived) ?? talkingPoints?.[0];
@@ -160,7 +175,32 @@ function buildSummary(
     analytics.clientSummary.retentionRate < 92 ? "Plan a retention touchpoint" : "Maintain momentum with proactive outreach",
   ].filter(Boolean) as string[];
 
-  const nextBestActions = nextBestActionsSource.slice(0, highlightCount);
+  const dismissedSet = new Set(
+    (adviceFeedback?.summary.repeatedDismissals ?? [])
+      .filter((item) => item.count > 1)
+      .map((item) => item.recommendation.toLowerCase())
+  );
+
+  const curatedActions = nextBestActionsSource.filter((action) => !dismissedSet.has(action.toLowerCase()));
+  const nextBestActions = (curatedActions.length > 0 ? curatedActions : nextBestActionsSource).slice(0, highlightCount);
+  const suppressedActions = nextBestActionsSource.filter((action) => dismissedSet.has(action.toLowerCase()));
+
+  const adviceFeedbackSummary: AdviceFeedbackSummary | undefined = adviceFeedback
+    ? {
+        total: adviceFeedback.summary.total,
+        accepted: adviceFeedback.summary.accepted,
+        dismissed: adviceFeedback.summary.dismissed,
+        adoptionRate: adviceFeedback.summary.adoptionRate,
+        repeatedDismissals: adviceFeedback.summary.repeatedDismissals,
+      }
+    : undefined;
+
+  if (adviceFeedbackSummary?.adoptionRate !== undefined && adviceFeedbackSummary.adoptionRate !== null) {
+    summaryParts.push(
+      `AI guidance adoption at ${percentFormatter.format((adviceFeedbackSummary.adoptionRate ?? 0) / 100)} ` +
+      `(${adviceFeedbackSummary.accepted} accepted).`
+    );
+  }
 
   return {
     summary: `${toneOpening} ${summaryParts.join(" ")}`.trim(),
@@ -170,12 +210,14 @@ function buildSummary(
     generatedAt: analytics.generatedAt,
     tone: preferences.tone,
     depth: preferences.depth,
+    adviceFeedback: adviceFeedbackSummary,
+    suppressedActions: suppressedActions.length ? suppressedActions : undefined,
   };
 }
 
 async function generateDashboardBriefing(preferences: BriefingPreferences): Promise<DashboardBriefing> {
-  const { announcements, talkingPoints, analytics } = await fetchBriefingInputs();
-  return buildSummary(announcements ?? [], talkingPoints ?? [], analytics, preferences);
+  const { announcements, talkingPoints, analytics, adviceFeedback } = await fetchBriefingInputs();
+  return buildSummary(announcements ?? [], talkingPoints ?? [], analytics, preferences, adviceFeedback);
 }
 
 export function useDashboardBriefing(preferences: BriefingPreferences) {

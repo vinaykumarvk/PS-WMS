@@ -808,6 +808,27 @@ export type InsertCommunicationTemplate = z.infer<typeof insertCommunicationTemp
 export type CommunicationAnalytic = typeof communicationAnalytics.$inferSelect;
 export type InsertCommunicationAnalytic = z.infer<typeof insertCommunicationAnalyticSchema>;
 
+// AI Advice Interactions - capture RM feedback on AI recommendations
+export const aiAdviceInteractions = pgTable("ai_advice_interactions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id),
+  clientId: integer("client_id").references(() => clients.id),
+  adviceId: text("advice_id").notNull(),
+  recommendation: text("recommendation").notNull(),
+  action: text("action").notNull(),
+  source: text("source").default("dashboard_briefing"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAiAdviceInteractionSchema = createInsertSchema(aiAdviceInteractions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type AiAdviceInteraction = typeof aiAdviceInteractions.$inferSelect;
+export type InsertAiAdviceInteraction = z.infer<typeof insertAiAdviceInteractionSchema>;
+
 // Talking Points - insights and conversation starters for RMs
 export const talkingPoints = pgTable("talking_points", {
   id: serial("id").primaryKey(),

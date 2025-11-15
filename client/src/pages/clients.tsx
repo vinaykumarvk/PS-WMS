@@ -121,6 +121,7 @@ type DraftKind = ClientDraftRequest['type'];
 interface ClientCardProps {
   client: ClientAugmented;
   onClick: (id: number, section?: string) => void;
+  health?: RelationshipHealthRecord;
 }
 
 function isClientIncomplete(client: ClientAugmented): boolean {
@@ -344,8 +345,13 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
     return 'On Track';
   };
 
+  const DEFAULT_HEALTH_STYLE = { text: "text-foreground", bar: "bg-muted-foreground/50" };
 
-  
+  const healthMeta = health ? getRelationshipHealthStatusMeta(health.status) : undefined;
+  const toneStyle = healthMeta ? HEALTH_TONE_STYLES[healthMeta.tone] : DEFAULT_HEALTH_STYLE;
+  const healthScore = health ? Math.max(6, Math.min(health.score, 100)) : 0;
+  const healthNarrative = health?.recommendedFocus ?? health?.risks[0] ?? health?.strengths[0];
+  const highlightAsFocus = Boolean(health?.recommendedFocus || (health?.risks && health.risks.length > 0));
   // Format performance value with sign and color
   const formatPerformance = (performance: number | null | undefined) => {
     if (performance === null || performance === undefined) {
@@ -548,9 +554,22 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
 
             {/* Client Status/Health Indicator */}
             <div className="p-3 bg-card/60 rounded-lg hover:bg-card transition-all duration-200 shadow-sm hover:shadow-md border border-border/20">
-              <div className="text-xs text-muted-foreground mb-1 font-medium">Status</div>
-              <div className="text-sm font-medium text-foreground">{getClientHealthStatus(client, tasks, appointments, alerts)}</div>
-              <div className={`h-1.5 w-full rounded-full mt-2 ${getClientHealthBg(client, tasks, appointments, alerts)} shadow-sm`}></div>
+              <div className="text-xs text-muted-foreground mb-1 font-medium">Relationship Health</div>
+              <div className="flex items-center justify-between text-sm font-medium">
+                <span className={toneStyle.text}>{health?.statusLabel ?? 'Assessing'}</span>
+                <span className="text-xs text-muted-foreground">{health ? `${health.score}/100` : '—'}</span>
+              </div>
+              <div className="mt-2 h-1.5 w-full rounded-full bg-muted overflow-hidden shadow-sm">
+                <div
+                  className={`h-full transition-all duration-500 ${toneStyle.bar}`}
+                  style={{ width: `${health ? healthScore : 0}%` }}
+                ></div>
+              </div>
+              {healthNarrative && (
+                <div className="mt-2 text-[11px] text-muted-foreground">
+                  {highlightAsFocus ? `Focus: ${healthNarrative}` : `Strength: ${healthNarrative}`}
+                </div>
+              )}
             </div>
 
             {/* Churn Risk */}
@@ -690,7 +709,7 @@ export default function Clients() {
   }, []);
   
   // Use the clientApi service to fetch clients data
-  const { data: clients, isLoading } = useQuery({
+  const { data: clients, isLoading } = useQuery<Client[]>({
     queryKey: ['clients'],
     queryFn: () => clientApi.getClients(),
   });
@@ -703,17 +722,17 @@ export default function Clients() {
   });
 
   // Fetch additional data for health status calculations
-  const { data: tasks = [] } = useQuery({
+  const { data: tasks = [] } = useQuery<any[]>({
     queryKey: ['tasks'],
     queryFn: () => fetch('/api/tasks').then(res => res.json()),
   });
 
-  const { data: appointments = [] } = useQuery({
+  const { data: appointments = [] } = useQuery<any[]>({
     queryKey: ['appointments'],
     queryFn: () => fetch('/api/appointments').then(res => res.json()),
   });
 
-  const { data: alerts = [] } = useQuery({
+  const { data: alerts = [] } = useQuery<any[]>({
     queryKey: ['portfolio-alerts'],
     queryFn: () => fetch('/api/portfolio-alerts').then(res => res.json()),
   });
@@ -808,6 +827,34 @@ export default function Clients() {
             if (bMatch.score !== aMatch.score) return bMatch.score - aMatch.score;
             return aMatch.index - bMatch.index;
           }
+          const today = new Date();
+          const daysSinceLastContact = a.lastContactDate
+            ? Math.floor((today.getTime() - new Date(a.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
+            : 999;
+          const daysSinceLastContactB = b.lastContactDate
+            ? Math.floor((today.getTime() - new Date(b.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
+            : 999;
+
+          const healthA = healthMap.get(a.id);
+          const healthB = healthMap.get(b.id);
+
+          const aNeedsAttention = healthA
+            ? healthA.status === 'at-risk' || healthA.status === 'watch'
+            : daysSinceLastContact > 90 || (a.alertCount && a.alertCount > 0);
+          const bNeedsAttention = healthB
+            ? healthB.status === 'at-risk' || healthB.status === 'watch'
+            : daysSinceLastContactB > 90 || (b.alertCount && b.alertCount > 0);
+
+          if (aNeedsAttention && !bNeedsAttention) return -1;
+          if (!aNeedsAttention && bNeedsAttention) return 1;
+
+          if (healthA && healthB && healthA.score !== healthB.score) {
+            return healthA.score - healthB.score;
+          }
+
+          return (b.aumValue || 0) - (a.aumValue || 0);
+        })
+    : [];
           if (aMatch) return -1;
           if (bMatch) return 1;
         }
@@ -1105,6 +1152,7 @@ export default function Clients() {
               tasks={Array.isArray(tasks) ? tasks : []}
               appointments={Array.isArray(appointments) ? appointments : []}
               alerts={Array.isArray(alerts) ? alerts : []}
+              health={healthMap.get(client.id)}
             />
           ))}
         </div>

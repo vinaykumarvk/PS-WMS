@@ -27,6 +27,16 @@ import session from "express-session";
 import MemoryStore from "memorystore";
 import { z } from "zod";
 
+const aiAdviceInteractionSchema = z.object({
+  adviceId: z.string().min(1),
+  recommendation: z.string().min(1),
+  action: z.enum(["accepted", "dismissed", "ignored"]),
+  clientId: z.number().int().optional(),
+  source: z.string().optional(),
+  metadata: z.record(z.any()).optional(),
+  surfacedAt: z.string().optional(),
+});
+
 // Type extension for session
 interface AuthenticatedSession extends session.Session {
   userId?: number;
@@ -997,6 +1007,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Get announcements error:', error);
       res.status(500).json({ error: 'Failed to fetch announcements' });
+    }
+  });
+
+  // AI advice interaction telemetry routes
+  app.post('/api/ai-advice/interactions', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      if (!req.session.userId) {
+        req.session.userId = 1;
+        req.session.userRole = 'relationship_manager';
+      }
+
+      const parseResult = aiAdviceInteractionSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({
+          message: 'Invalid interaction payload',
+          errors: parseResult.error.flatten(),
+        });
+      }
+
+      const data = parseResult.data;
+      const normalizedAction = data.action === 'ignored' ? 'dismissed' : data.action;
+      const metadataBase: Record<string, any> = { ...(data.metadata ?? {}) };
+      if (data.surfacedAt) {
+        metadataBase.surfacedAt = data.surfacedAt;
+      }
+      const metadataPayload = Object.keys(metadataBase).length > 0 ? metadataBase : null;
+
+      let interactionRecord: any;
+      if (db) {
+        const [inserted] = await db
+          .insert(aiAdviceInteractions)
+          .values({
+            userId: req.session.userId,
+            clientId: data.clientId ?? null,
+            adviceId: data.adviceId,
+            recommendation: data.recommendation,
+            action: normalizedAction,
+            source: data.source ?? 'dashboard_briefing',
+            metadata: metadataPayload,
+          })
+          .returning();
+        interactionRecord = inserted;
+      } else if (supabaseServer) {
+        const { data: inserted, error } = await supabaseServer
+          .from('ai_advice_interactions')
+          .insert({
+            user_id: req.session.userId,
+            client_id: data.clientId ?? null,
+            advice_id: data.adviceId,
+            recommendation: data.recommendation,
+            action: normalizedAction,
+            source: data.source ?? 'dashboard_briefing',
+            metadata: metadataPayload,
+          })
+          .select('*')
+          .single();
+        if (error) throw error;
+        interactionRecord = inserted;
+      } else {
+        return res.status(503).json({ message: 'Feedback storage not configured' });
+      }
+
+      console.log('[AI-ADVICE] Interaction captured for training queue', {
+        userId: req.session.userId,
+        adviceId: data.adviceId,
+        action: normalizedAction,
+      });
+
+      res.status(201).json({ message: 'Interaction captured', interaction: interactionRecord });
+    } catch (error: any) {
+      console.error('[AI-ADVICE] Failed to record interaction', error);
+      res.status(500).json({ message: 'Failed to record interaction', error: error.message });
+    }
+  });
+
+  app.get('/api/ai-advice/interactions', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      if (!req.session.userId) {
+        req.session.userId = 1;
+        req.session.userRole = 'relationship_manager';
+      }
+
+      const userId = req.session.userId as number;
+      const limitParam = Number(req.query.limit);
+      const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
+      const sinceParam = req.query.since ? new Date(String(req.query.since)) : null;
+      const hasValidSince = sinceParam && !Number.isNaN(sinceParam.getTime());
+
+      let interactions: any[] = [];
+      if (db) {
+        let condition: any = eq(aiAdviceInteractions.userId, userId);
+        if (hasValidSince) {
+          condition = and(condition, gt(aiAdviceInteractions.createdAt, sinceParam!));
+        }
+        interactions = await db
+          .select()
+          .from(aiAdviceInteractions)
+          .where(condition)
+          .orderBy(desc(aiAdviceInteractions.createdAt))
+          .limit(limit);
+      } else if (supabaseServer) {
+        let query = supabaseServer
+          .from('ai_advice_interactions')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        if (hasValidSince) {
+          query = query.gt('created_at', sinceParam!.toISOString());
+        }
+        const { data, error } = await query;
+        if (error) throw error;
+        interactions = data || [];
+      }
+
+      const accepted = interactions.filter(item => item.action === 'accepted').length;
+      const dismissed = interactions.filter(item => item.action === 'dismissed' || item.action === 'ignored').length;
+      const total = interactions.length;
+      const adoptionRate = total > 0 ? Math.round((accepted / total) * 100) : null;
+
+      const dismissalMap = new Map<string, { recommendation: string; count: number }>();
+      interactions.forEach(item => {
+        const action = item.action;
+        const recommendation = item.recommendation as string | undefined;
+        if ((action === 'dismissed' || action === 'ignored') && recommendation) {
+          const key = recommendation.toLowerCase();
+          const entry = dismissalMap.get(key) || { recommendation, count: 0 };
+          entry.count += 1;
+          dismissalMap.set(key, entry);
+        }
+      });
+
+      const repeatedDismissals = Array.from(dismissalMap.values())
+        .filter(entry => entry.count > 1)
+        .sort((a, b) => b.count - a.count);
+
+      res.json({
+        interactions,
+        summary: {
+          total,
+          accepted,
+          dismissed,
+          adoptionRate,
+          repeatedDismissals,
+        },
+      });
+    } catch (error: any) {
+      console.error('[AI-ADVICE] Failed to fetch interactions', error);
+      res.status(500).json({ message: 'Failed to fetch interactions', error: error.message });
     }
   });
 
