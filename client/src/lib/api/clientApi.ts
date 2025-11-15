@@ -1,5 +1,10 @@
 import { Client } from "@shared/schema";
-import { queryClient } from "../queryClient";
+import type {
+  ClientAttentionReason,
+  ClientDraftRequest,
+  ClientDraftResponse,
+  SemanticSearchResult,
+} from "@shared/types/insights";
 
 /**
  * Client API service
@@ -7,20 +12,28 @@ import { queryClient } from "../queryClient";
  * It can be easily replaced with another implementation for different banks
  * without changing the consuming components.
  */
+export type ClientListItem = Client & {
+  churnScore?: number;
+  upsellScore?: number;
+  attentionReasons?: ClientAttentionReason[];
+};
+
 export interface ClientApiService {
-  getClients(): Promise<Client[]>;
+  getClients(): Promise<ClientListItem[]>;
   getClient(id: number): Promise<Client | undefined>;
   getRecentClients(limit: number): Promise<Client[]>;
   createClient(clientData: Omit<Client, "id" | "createdAt">): Promise<Client>;
   updateClient(id: number, clientData: Partial<Omit<Client, "id" | "createdAt">>): Promise<Client>;
   deleteClient(id: number): Promise<boolean>;
+  semanticSearch(query: string): Promise<SemanticSearchResult[]>;
+  generateDraft(clientId: number, payload: ClientDraftRequest): Promise<ClientDraftResponse>;
 }
 
 /**
  * Default implementation that uses the current API endpoints
  */
 export class DefaultClientApiService implements ClientApiService {
-  async getClients(): Promise<Client[]> {
+  async getClients(): Promise<ClientListItem[]> {
     const response = await fetch('/api/clients', {
       credentials: 'include'
     });
@@ -72,6 +85,34 @@ export class DefaultClientApiService implements ClientApiService {
     });
     return response.ok;
   }
+
+  async semanticSearch(query: string): Promise<SemanticSearchResult[]> {
+    const response = await fetch(`/api/clients/search/semantic?q=${encodeURIComponent(query)}`, {
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      throw new Error('Failed to perform semantic search');
+    }
+    return response.json();
+  }
+
+  async generateDraft(clientId: number, payload: ClientDraftRequest): Promise<ClientDraftResponse> {
+    const response = await fetch(`/api/clients/${clientId}/ai-drafts`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || 'Failed to generate draft');
+    }
+
+    return response.json();
+  }
 }
 
 // Export a singleton instance of the default implementation
@@ -102,4 +143,6 @@ export const clientApi = {
   createClient: (clientData: Omit<Client, "id" | "createdAt">) => clientApiService.createClient(clientData),
   updateClient: (id: number, clientData: Partial<Omit<Client, "id" | "createdAt">>) => clientApiService.updateClient(id, clientData),
   deleteClient: (id: number) => clientApiService.deleteClient(id),
+  semanticSearch: (query: string) => clientApiService.semanticSearch(query),
+  generateDraft: (clientId: number, payload: ClientDraftRequest) => clientApiService.generateDraft(clientId, payload),
 };

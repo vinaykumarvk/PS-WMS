@@ -47,7 +47,7 @@ interface PersonalInfoFormData {
 }
 
 interface PersonalInfoFormProps {
-  onSubmit: (data: PersonalInfoFormData) => void;
+  onSubmit: (data: PersonalInfoFormData) => void | Promise<void>;
   onSaveDraft?: (data: PersonalInfoFormData) => void;
   onCancel: () => void;
   isLoading?: boolean;
@@ -103,6 +103,7 @@ export function PersonalInfoForm({ onSubmit, onSaveDraft, onCancel, isLoading = 
   }, [formData, onSaveDraft]);
 
   const [errors, setErrors] = useState<Partial<PersonalInfoFormData>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<PersonalInfoFormData> = {};
@@ -132,10 +133,18 @@ export function PersonalInfoForm({ onSubmit, onSaveDraft, onCancel, isLoading = 
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (validateForm()) {
-      onSubmit(formData);
+      try {
+        setIsSubmitting(true);
+        await onSubmit(formData);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to submit personal information";
+        toast({ title: "Submission Failed", description: message, variant: "destructive" });
+      } finally {
+        setIsSubmitting(false);
+      }
     } else {
       toast({ title: "Validation Error", description: "Please fix the errors before submitting", variant: "destructive" });
     }
@@ -525,16 +534,21 @@ export function PersonalInfoForm({ onSubmit, onSaveDraft, onCancel, isLoading = 
 
             {/* Form Actions */}
             <div className="flex justify-end gap-4 pt-6">
-              <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
+              <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading || isSubmitting}>
                 Cancel
               </Button>
               {onSaveDraft && (
-                <Button type="button" variant="outline" onClick={() => onSaveDraft(formData)} disabled={isLoading}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onSaveDraft(formData)}
+                  disabled={isLoading || isSubmitting}
+                >
                   Save Draft
                 </Button>
               )}
-              <Button type="submit" disabled={isLoading}>
-                {isLoading ? "Saving..." : "Save Personal Information"}
+              <Button type="submit" disabled={isLoading || isSubmitting}>
+                {isLoading || isSubmitting ? "Saving..." : "Save Personal Information"}
               </Button>
             </div>
           </form>

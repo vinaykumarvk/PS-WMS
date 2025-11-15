@@ -68,6 +68,7 @@ export default function ClientInteractionsPage() {
     enabled: !!clientId,
   });
 
+  
   const { data: interactionSummary, isLoading: interactionsLoading } = useQuery<InteractionSummaryResponse | null>({
     queryKey: ['/api/interactions', clientId],
     queryFn: async () => {
@@ -118,6 +119,7 @@ export default function ClientInteractionsPage() {
     return { color: 'border-muted', icon: Clock };
   };
 
+  
   if (!clientId) {
     return (
       <div className="px-4 sm:px-6 md:px-8 lg:px-10 xl:px-12 py-6 sm:py-8 lg:py-10">
@@ -348,6 +350,7 @@ export default function ClientInteractionsPage() {
         </CardContent>
       </Card>
 
+      
       <Card>
         <CardContent className="p-6">
           <h2 className="text-lg font-medium mb-4">Engagement signal breakdown</h2>

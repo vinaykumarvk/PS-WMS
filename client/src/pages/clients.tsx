@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,15 +8,24 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { 
-  Popover, 
-  PopoverContent, 
-  PopoverTrigger 
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger
 } from "@/components/ui/popover";
+import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { getTierColor, formatRelativeDate } from "@/lib/utils";
-import { 
+import {
   Search,
-  UserPlus,
   Filter as FilterIcon,
   ChevronDown,
   Download,
@@ -28,14 +37,23 @@ import {
   Crown,
   Award,
   Medal,
-  AlertTriangle
+  AlertTriangle,
+  Loader2,
+  Sparkles
 } from "lucide-react";
-import { clientApi } from "@/lib/api";
-import { Client } from "@shared/schema";
+import { clientApi, type ClientListItem } from "@/lib/api";
+import type {
+  ClientAttentionReason,
+  ClientDraftRequest,
+  ClientDraftResponse,
+  SemanticSearchResult,
+} from "@shared/types/insights";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useToast } from "@/hooks/use-toast";
 import { generateAvatar } from "@/lib/avatarGenerator";
 import { FloatingAddButton } from "@/components/ui/floating-add-button";
 import { EmptyState } from "@/components/empty-state";
+import { InsightBadge } from "@/components/ui/insight-badge";
 
 // Filter options type definition
 interface FilterOptions {
@@ -89,13 +107,23 @@ const getTierBadgeColors = (tier: string) => {
   }
 };
 
+type SemanticMatchWithRank = SemanticSearchResult & { index: number };
+
+type ClientAugmented = ClientListItem & {
+  profile_status?: string;
+  incomplete_sections?: string[];
+  semanticMatch?: SemanticMatchWithRank | null;
+};
+
+type DraftKind = ClientDraftRequest['type'];
+
 // Client Card component
 interface ClientCardProps {
-  client: Client & { profile_status?: string; incomplete_sections?: string[]; aumValue?: number; investmentHorizon?: string | null };
+  client: ClientAugmented;
   onClick: (id: number, section?: string) => void;
 }
 
-function isClientIncomplete(client: any): boolean {
+function isClientIncomplete(client: ClientAugmented): boolean {
   // Treat as incomplete when server marks it or when core fields are missing/empty
   if (client?.profile_status === 'incomplete') return true;
   const noFinancials = (client?.aumValue ?? 0) === 0;
@@ -104,11 +132,31 @@ function isClientIncomplete(client: any): boolean {
   return noFinancials || noHorizon || noNetWorth;
 }
 
+const getChurnColor = (score: number) => {
+  if (score >= 70) return 'text-destructive';
+  if (score >= 45) return 'text-amber-600';
+  return 'text-emerald-600';
+};
+
+const getUpsellColor = (score: number) => {
+  if (score >= 70) return 'text-emerald-600';
+  if (score >= 45) return 'text-primary';
+  return 'text-muted-foreground';
+};
+
 function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [] }: ClientCardProps & { tasks?: any[], appointments?: any[], alerts?: any[] }) {
   const tierColors = getTierColor(client.tier);
   const TierIcon = getTierIcon(client.tier);
   const tierBadge = getTierBadgeColors(client.tier);
   const incomplete = isClientIncomplete(client);
+  const { toast } = useToast();
+  const [draftState, setDraftState] = useState<{ type: DraftKind; content: string; metadata?: ClientDraftResponse['metadata']; } | null>(null);
+  const [draftLoading, setDraftLoading] = useState<DraftKind | null>(null);
+
+  const attentionReasons = client.attentionReasons ?? [];
+  const profileReasons = attentionReasons.filter(reason => reason.category === 'profile');
+  const contactReasons = attentionReasons.filter(reason => reason.category === 'contact' || reason.category === 'engagement');
+  const alertReasons = attentionReasons.filter(reason => reason.category === 'alerts');
 
   // Helper: contact urgency (re-added)
   const getContactUrgency = (lastContactDate: Date | string | null | undefined, clientId: number, appointmentsList: any[] = []) => {
@@ -125,6 +173,8 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
     if (hasMeetingNextWeek || daysSinceContact > 75) return { isUrgent: true, message: 'Contact soon' };
     return { isUrgent: false, message: '' };
   };
+
+  const contactUrgency = getContactUrgency(client.lastContactDate, client.id, appointments);
 
   // Handle section clicks
   const handleSectionClick = (e: React.MouseEvent, section: string) => {
@@ -174,8 +224,45 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
     }
   };
 
+  const churnScore = Math.round(client.churnScore ?? 0);
+  const upsellScore = Math.round(client.upsellScore ?? 0);
+
+  const handleGenerateDraft = async (type: DraftKind) => {
+    try {
+      setDraftLoading(type);
+      const payload: ClientDraftRequest = {
+        type,
+        focus: attentionReasons[0]?.message,
+      };
+      const draft = await clientApi.generateDraft(client.id, payload);
+      setDraftState({ type, content: draft.content, metadata: draft.metadata });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      toast({ title: 'Draft generation failed', description: message, variant: 'destructive' });
+    } finally {
+      setDraftLoading(null);
+    }
+  };
+
+  const handleCopyDraft = async () => {
+    if (!draftState) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(draftState.content);
+        toast({ title: 'Draft copied', description: 'The generated draft is now in your clipboard.' });
+      } else {
+        toast({ title: 'Copy unavailable', description: 'Copy this draft manually in your browser.', variant: 'destructive' });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to copy to clipboard';
+      toast({ title: 'Copy failed', description: message, variant: 'destructive' });
+    }
+  };
+
+  const closeDraftDialog = () => setDraftState(null);
+
   // Client health status background colors for indicator bar
-  const getClientHealthBg = (client: Client, tasks: any[] = [], appointments: any[] = [], alerts: any[] = []) => {
+  const getClientHealthBg = (client: ClientAugmented, tasks: any[] = [], appointments: any[] = [], alerts: any[] = []) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
@@ -216,7 +303,7 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
     return 'bg-green-500'; // On Track
   };
 
-  const getClientHealthStatus = (client: Client, tasks: any[] = [], appointments: any[] = [], alerts: any[] = []) => {
+  const getClientHealthStatus = (client: ClientAugmented, tasks: any[] = [], appointments: any[] = [], alerts: any[] = []) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
@@ -291,10 +378,11 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
 
   
   return (
-    <Card 
-      className={`overflow-hidden hover:shadow-lg transition-all duration-300 hover:scale-[1.02] hover:shadow-primary/10 transform interactive-hover mb-4 border-l-4 ${tierColors.border} !bg-card !border-border`}
-    >
-      <CardContent className="p-0">
+    <>
+      <Card
+        className={`overflow-hidden hover:shadow-lg transition-all duration-300 hover:scale-[1.02] hover:shadow-primary/10 transform interactive-hover mb-4 border-l-4 ${tierColors.border} !bg-card !border-border`}
+      >
+        <CardContent className="p-0">
         {/* Header Section - Client Info */}
         <div className="p-4 bg-gradient-to-r from-muted/20 to-transparent border-b border-border/30">
           <div className="flex items-start justify-between">
@@ -326,12 +414,18 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
                   <h3 className="text-sm font-semibold text-foreground truncate hover:text-primary transition-colors">{client.fullName}</h3>
                 </div>
                 
-                {/* Pending badge */}
-                {client.profile_status === 'incomplete' || incomplete ? (
-                  <div className="inline-flex items-center gap-1 text-xs text-primary bg-primary/10 border border-primary/30 rounded px-2 py-0.5 mt-1">
-                    <AlertTriangle className="h-3 w-3" /> Pending profile
+                {(client.profile_status === 'incomplete' || incomplete || profileReasons.length > 0) && (
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    {(client.profile_status === 'incomplete' || incomplete) && (
+                      <div className="inline-flex items-center gap-1 text-xs text-primary bg-primary/10 border border-primary/30 rounded px-2 py-0.5">
+                        <AlertTriangle className="h-3 w-3" /> Pending profile
+                      </div>
+                    )}
+                    {profileReasons.length > 0 && (
+                      <InsightBadge reasons={profileReasons} />
+                    )}
                   </div>
-                ) : null}
+                )}
                 
                 {/* Contact Information Group */}
                 <div className="space-y-0.5">
@@ -405,7 +499,7 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
             </div>
             
             {/* Last Contact with urgency indicator */}
-            <div 
+            <div
               className="text-center p-3 bg-card/60 rounded-lg cursor-pointer hover:bg-card transition-all duration-200 shadow-sm hover:shadow-md border border-border/20"
               onClick={(e) => handleSectionClick(e, 'communications')}
               title="View client appointments"
@@ -414,11 +508,16 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
               <div className="text-sm font-medium text-foreground">
                 {formatRelativeDate(client.lastContactDate)}
               </div>
-              {getContactUrgency(client.lastContactDate, client.id, appointments).isUrgent && (
-                <div className="text-xs text-muted-foreground mt-1 font-medium">
-                  {getContactUrgency(client.lastContactDate, client.id, appointments).message}
-                </div>
-              )}
+              <div className="mt-2 flex flex-col items-center gap-1">
+                {contactUrgency.message && (
+                  <div className="text-xs text-muted-foreground font-medium text-center">
+                    {contactUrgency.message}
+                  </div>
+                )}
+                {contactReasons.length > 0 && (
+                  <InsightBadge reasons={contactReasons} />
+                )}
+              </div>
             </div>
             
             {/* Last Transaction - moved to top row */}
@@ -446,17 +545,112 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
               </div>
               <div className={`h-1.5 w-full rounded-full mt-2 ${getRiskProfileBg(client.riskProfile)} shadow-sm`}></div>
             </div>
-            
+
             {/* Client Status/Health Indicator */}
             <div className="p-3 bg-card/60 rounded-lg hover:bg-card transition-all duration-200 shadow-sm hover:shadow-md border border-border/20">
               <div className="text-xs text-muted-foreground mb-1 font-medium">Status</div>
               <div className="text-sm font-medium text-foreground">{getClientHealthStatus(client, tasks, appointments, alerts)}</div>
               <div className={`h-1.5 w-full rounded-full mt-2 ${getClientHealthBg(client, tasks, appointments, alerts)} shadow-sm`}></div>
             </div>
+
+            {/* Churn Risk */}
+            <div className="p-3 bg-card/60 rounded-lg hover:bg-card transition-all duration-200 shadow-sm hover:shadow-md border border-border/20">
+              <div className="text-xs text-muted-foreground mb-1 font-medium">Churn Risk</div>
+              <div className="flex items-center justify-between text-sm font-semibold">
+                <span className={getChurnColor(churnScore)}>{churnScore ? `${churnScore}%` : '—'}</span>
+                <span className="text-[11px] text-muted-foreground">Model</span>
+              </div>
+              <Progress value={churnScore} className="mt-2 h-1.5" />
+              {alertReasons.length > 0 && (
+                <div className="mt-2 flex justify-center">
+                  <InsightBadge reasons={alertReasons} />
+                </div>
+              )}
+            </div>
+
+            {/* Upsell Potential */}
+            <div className="p-3 bg-card/60 rounded-lg hover:bg-card transition-all duration-200 shadow-sm hover:shadow-md border border-border/20">
+              <div className="text-xs text-muted-foreground mb-1 font-medium">Upsell Potential</div>
+              <div className="flex items-center justify-between text-sm font-semibold">
+                <span className={getUpsellColor(upsellScore)}>{upsellScore ? `${upsellScore}%` : '—'}</span>
+                <span className="text-[11px] text-muted-foreground">Opportunity</span>
+              </div>
+              <Progress value={upsellScore} className="mt-2 h-1.5" />
+            </div>
           </div>
         </div>
+
+        <div className="p-4 border-t border-border/40 bg-card/70">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <span>AI drafting assistant</span>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleGenerateDraft('email_follow_up')}
+                  disabled={draftLoading !== null}
+                >
+                  {draftLoading === 'email_follow_up' ? (
+                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  Draft email
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleGenerateDraft('call_script')}
+                  disabled={draftLoading !== null}
+                >
+                  {draftLoading === 'call_script' ? (
+                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  Call script
+                </Button>
+              </div>
+            </div>
+            {client.semanticMatch?.reasons && client.semanticMatch.reasons.length > 0 && (
+              <div className="flex items-start gap-2 text-[11px] text-muted-foreground">
+                <Sparkles className="h-3 w-3 text-primary mt-0.5" />
+                <span>Semantic match: {client.semanticMatch.reasons[0]}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
       </CardContent>
-    </Card>
+      </Card>
+      <Dialog open={!!draftState} onOpenChange={(open) => { if (!open) closeDraftDialog(); }}>
+        <DialogContent className="max-w-lg space-y-4">
+          <DialogHeader>
+            <DialogTitle>{draftState?.type === 'call_script' ? 'AI call script' : 'AI email draft'}</DialogTitle>
+            <DialogDescription>Generated using the latest client context and attention signals.</DialogDescription>
+          </DialogHeader>
+          <Textarea value={draftState?.content ?? ''} readOnly className="min-h-[240px]" />
+          {draftState?.metadata?.highlights && draftState.metadata.highlights.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground mb-1">Highlights</div>
+              <ul className="list-disc pl-4 space-y-1 text-xs text-muted-foreground">
+                {draftState.metadata.highlights.map((item, index) => (
+                  <li key={`${item}-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <DialogFooter className="sm:space-x-2">
+            <Button variant="outline" onClick={closeDraftDialog}>
+              Close
+            </Button>
+            <Button onClick={handleCopyDraft}>
+              Copy draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -501,6 +695,13 @@ export default function Clients() {
     queryFn: () => clientApi.getClients(),
   });
 
+  const { data: semanticResults = [], isFetching: isSemanticLoading } = useQuery<SemanticSearchResult[]>({
+    queryKey: ['client-semantic-search', searchQuery],
+    queryFn: () => clientApi.semanticSearch(searchQuery),
+    enabled: searchQuery.trim().length >= 3,
+    staleTime: 60_000,
+  });
+
   // Fetch additional data for health status calculations
   const { data: tasks = [] } = useQuery({
     queryKey: ['tasks'],
@@ -516,6 +717,33 @@ export default function Clients() {
     queryKey: ['portfolio-alerts'],
     queryFn: () => fetch('/api/portfolio-alerts').then(res => res.json()),
   });
+
+  const semanticMap = useMemo(() => {
+    const map = new Map<number, SemanticMatchWithRank>();
+    semanticResults.forEach((result, index) => {
+      map.set(result.clientId, { ...result, index });
+    });
+    return map;
+  }, [semanticResults]);
+
+  const useSemanticMatches = searchQuery.trim().length >= 3 && semanticMap.size > 0;
+
+  const augmentedClients = useMemo(() => {
+    if (!clients) return [] as ClientAugmented[];
+    return (clients as ClientListItem[]).map((client) => {
+      const profileStatus = (client as any).profile_status ?? (client as any).profileStatus;
+      const incompleteSections = (client as any).incomplete_sections ?? client.incompleteSections ?? [];
+      return {
+        ...client,
+        profile_status: profileStatus,
+        incomplete_sections: incompleteSections,
+        attentionReasons: client.attentionReasons ?? [],
+        semanticMatch: semanticMap.get(client.id) ?? null,
+      } as ClientAugmented;
+    });
+  }, [clients, semanticMap]);
+
+  const recentMap = useMemo(() => getRecentOrder(), [clients]);
   
   // Calculate active filters
   useEffect(() => {
@@ -539,72 +767,74 @@ export default function Clients() {
   // Add debugging for clients
   console.log('Clients data received:', clients);
   
-  const recentMap = getRecentOrder();
-  const filteredClients = clients
-    ? clients
-        .filter((client: Client) => {
-          // Apply search filter
-          const matchesSearch = !searchQuery || 
-            client.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (client.email && client.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
-            (client.phone && client.phone.includes(searchQuery));
-          
-          // Apply additional filters with safer checks - default to true if value doesn't exist
-          const matchesTier = client.tier ? filterOptions.includedTiers.includes(client.tier) : true;
-          
-          // Check risk profile with case insensitive comparison - default to true if missing
-          const riskProfile = client.riskProfile ? client.riskProfile.toLowerCase() : '';
-          const matchesRiskProfile = !riskProfile || filterOptions.riskProfiles.includes(riskProfile);
-          
-          // Set a maximum AUM value to avoid filtering out high-value clients
-          const MAX_AUM = 100000000; // 10 Cr
-          const aumValue = typeof client.aumValue === 'number' ? client.aumValue : 0;
-          const matchesAum = aumValue >= filterOptions.minAum && 
-                            (aumValue <= filterOptions.maxAum || filterOptions.maxAum >= MAX_AUM);
-          
-          // Check pending profiles filter
-          const matchesPending = !filterOptions.pendingOnly || isClientIncomplete(client);
+  const filteredClients = useMemo(() => {
+    const normalizedSearch = searchQuery.trim().toLowerCase();
 
-          // Check recent access filter
-          const matchesRecent = !recentOnly || recentMap[String(client.id)];
+    return augmentedClients
+      .filter((client) => {
+        const matchesTier = client.tier ? filterOptions.includedTiers.includes(client.tier) : true;
 
-          // Check filter results
-          const result = matchesSearch && matchesTier && matchesRiskProfile && matchesAum && matchesPending && matchesRecent;
-          if (!result) {
-            console.log('Filtered out client:', client.id, client.fullName);
-            console.log('  - Tier match:', matchesTier, 'Risk match:', matchesRiskProfile, 'AUM match:', matchesAum, 'Pending match:', matchesPending, 'Recent match:', matchesRecent);
+        const riskProfile = client.riskProfile ? client.riskProfile.toLowerCase() : '';
+        const matchesRiskProfile = !riskProfile || filterOptions.riskProfiles.includes(riskProfile);
+
+        const MAX_AUM = 100000000;
+        const aumValue = typeof client.aumValue === 'number' ? client.aumValue : 0;
+        const matchesAum = aumValue >= filterOptions.minAum &&
+          (aumValue <= filterOptions.maxAum || filterOptions.maxAum >= MAX_AUM);
+
+        const matchesPending = !filterOptions.pendingOnly || isClientIncomplete(client);
+        const matchesRecent = !recentOnly || recentMap[String(client.id)];
+
+        const textMatches = !normalizedSearch ||
+          client.fullName.toLowerCase().includes(normalizedSearch) ||
+          (client.email && client.email.toLowerCase().includes(normalizedSearch)) ||
+          (client.phone && client.phone.includes(searchQuery));
+
+        const matchesSearch = !normalizedSearch || (useSemanticMatches ? !!client.semanticMatch : textMatches);
+
+        const result = matchesSearch && matchesTier && matchesRiskProfile && matchesAum && matchesPending && matchesRecent;
+        if (!result) {
+          console.log('Filtered out client:', client.id, client.fullName);
+          console.log('  - Tier match:', matchesTier, 'Risk match:', matchesRiskProfile, 'AUM match:', matchesAum, 'Pending match:', matchesPending, 'Recent match:', matchesRecent, 'Search match:', matchesSearch);
+        }
+
+        return result;
+      })
+      .sort((a, b) => {
+        if (useSemanticMatches) {
+          const aMatch = a.semanticMatch;
+          const bMatch = b.semanticMatch;
+          if (aMatch && bMatch) {
+            if (bMatch.score !== aMatch.score) return bMatch.score - aMatch.score;
+            return aMatch.index - bMatch.index;
           }
-          
-          return result;
-        })
-        // Smart sorting: Attention needed first, then by AUM within each group
-        .sort((a, b) => {
-          if (recentOnly) {
-            const ra = recentMap[String(a.id)] || 0;
-            const rb = recentMap[String(b.id)] || 0;
-            if (rb !== ra) return rb - ra;
-          }
-          // Check if clients need attention based on various factors
-          const today = new Date();
-          const daysSinceLastContact = a.lastContactDate 
-            ? Math.floor((today.getTime() - new Date(a.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
-            : 999;
-          const daysSinceLastContactB = b.lastContactDate 
-            ? Math.floor((today.getTime() - new Date(b.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
-            : 999;
-          
-          // Determine attention needed: >90 days since contact, or has alerts
-          const aNeedsAttention = daysSinceLastContact > 90 || (a.alertCount && a.alertCount > 0);
-          const bNeedsAttention = daysSinceLastContactB > 90 || (b.alertCount && b.alertCount > 0);
-          
-          // First, sort by attention needed (attention clients first)
-          if (aNeedsAttention && !bNeedsAttention) return -1;
-          if (!aNeedsAttention && bNeedsAttention) return 1;
-          
-          // Within same attention group, sort by AUM (highest first)
-          return (b.aumValue || 0) - (a.aumValue || 0);
-        })
-    : [];
+          if (aMatch) return -1;
+          if (bMatch) return 1;
+        }
+
+        if (recentOnly) {
+          const ra = recentMap[String(a.id)] || 0;
+          const rb = recentMap[String(b.id)] || 0;
+          if (rb !== ra) return rb - ra;
+        }
+
+        const today = new Date();
+        const daysSinceLastContactA = a.lastContactDate
+          ? Math.floor((today.getTime() - new Date(a.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
+          : 999;
+        const daysSinceLastContactB = b.lastContactDate
+          ? Math.floor((today.getTime() - new Date(b.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
+          : 999;
+
+        const aNeedsAttention = daysSinceLastContactA > 90 || (a.alertCount && a.alertCount > 0);
+        const bNeedsAttention = daysSinceLastContactB > 90 || (b.alertCount && b.alertCount > 0);
+
+        if (aNeedsAttention && !bNeedsAttention) return -1;
+        if (!aNeedsAttention && bNeedsAttention) return 1;
+
+        return (b.aumValue || 0) - (a.aumValue || 0);
+      });
+  }, [augmentedClients, filterOptions, recentOnly, recentMap, searchQuery, useSemanticMatches]);
   
   // Reset filters function
   const resetFilters = () => {
@@ -689,12 +919,15 @@ export default function Clients() {
           <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-              <Input 
-                placeholder="Search clients..." 
-                className="pl-10 bg-background border-input text-foreground focus-visible:ring-2 focus-visible:ring-primary/50 transition-all duration-200" 
+              <Input
+                placeholder="Search clients..."
+                className="pl-10 bg-background border-input text-foreground focus-visible:ring-2 focus-visible:ring-primary/50 transition-all duration-200"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
+              {isSemanticLoading && searchQuery.trim().length >= 3 && (
+                <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+              )}
             </div>
             <div className="flex gap-2">
               <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
@@ -864,7 +1097,7 @@ export default function Clients() {
         </div>
       ) : filteredClients && filteredClients.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredClients.map((client: Client) => (
+          {filteredClients.map((client: ClientAugmented) => (
             <ClientCard 
               key={client.id} 
               client={client} 
