@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Loader2, AlertTriangle, X, TrendingUp } from 'lucide-react';
+import { Loader2, AlertTriangle, X, TrendingUp, ShieldCheck } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import ProductList from './components/product-list';
 import ProductCart from './components/product-cart';
@@ -26,6 +26,36 @@ import { CartItem, TransactionModeData, Nominee, FullSwitchData, FullRedemptionD
 import { apiRequest } from '@/lib/queryClient';
 import { validateOrder, validateOrderWithProducts, validateNomineePercentages, validatePAN, validateGuardianInfo } from './utils/order-validations';
 import { useQuery } from '@tanstack/react-query';
+import { runComplianceAdvisors } from './utils/ai-compliance-advisor';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
+interface ConfirmationSummaryItem {
+  schemeName: string;
+  transactionType: string;
+  amount: number;
+}
+
+interface ConfirmationSummary {
+  orderId: number;
+  modelOrderId: string;
+  clientId: number | null;
+  totalAmount: number;
+  transactionMode: string;
+  goalReference?: string;
+  items: ConfirmationSummaryItem[];
+  complianceNotes: string[];
+  portfolioHighlights: string[];
+}
+
+const resolveApiUrl = (path: string): string => {
+  if (/^https?:/i.test(path)) {
+    return path;
+  }
+  const origin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : 'http://localhost';
+  return new URL(path, origin).toString();
+};
 
 function OrderManagementPageContent() {
   const { state, actions } = useOrderIntegration();
@@ -47,9 +77,13 @@ function OrderManagementPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
+  const [advisorNotes, setAdvisorNotes] = useState<string[]>([]);
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [showGoalAllocation, setShowGoalAllocation] = useState(false);
   const [showCreateGoalDialog, setShowCreateGoalDialog] = useState(false);
+  const [confirmationSummary, setConfirmationSummary] = useState<ConfirmationSummary | null>(null);
+  const [confirmationDialogOpen, setConfirmationDialogOpen] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState<number | null>(null);
 
   // Fetch products for validation
   const { data: products = [] } = useQuery<Product[]>({
@@ -66,7 +100,7 @@ function OrderManagementPageContent() {
   useEffect(() => {
     if (clientId) {
       // Fetch portfolio data
-      fetch('/api/portfolio/current-allocation', {
+      fetch(resolveApiUrl('/api/portfolio/current-allocation'), {
         headers: { 'Content-Type': 'application/json' },
       })
         .then(res => res.json())
@@ -85,7 +119,7 @@ function OrderManagementPageContent() {
   // Load favorites and recent orders
   useEffect(() => {
     // Fetch favorites
-    fetch('/api/quick-order/favorites', {
+    fetch(resolveApiUrl('/api/quick-order/favorites'), {
       headers: { 'Content-Type': 'application/json' },
     })
       .then(res => res.json())
@@ -97,7 +131,7 @@ function OrderManagementPageContent() {
       .catch(err => console.error('Failed to load favorites:', err));
 
     // Fetch recent orders
-    fetch('/api/quick-order/recent', {
+    fetch(resolveApiUrl('/api/quick-order/recent'), {
       headers: { 'Content-Type': 'application/json' },
     })
       .then(res => res.json())
@@ -185,7 +219,7 @@ function OrderManagementPageContent() {
       // Full Redemption and Full Switch are handled separately and don't need market values
     });
 
-    const validation = validateOrderWithProducts(
+    const baseValidation = validateOrderWithProducts(
       cartItems,
       products,
       nominees,
@@ -193,6 +227,18 @@ function OrderManagementPageContent() {
       transactionMode?.euin,
       marketValues
     );
+
+    const validation = runComplianceAdvisors(baseValidation, {
+      cartItems,
+      products,
+      nominees,
+      optOutOfNomination,
+      transactionMode,
+      portfolioData: state.portfolioData,
+      marketValues,
+    });
+
+    setAdvisorNotes(validation.advisorNotes);
 
     if (!validation.isValid) {
       setValidationErrors(validation.errors);
@@ -224,6 +270,9 @@ function OrderManagementPageContent() {
     
     // Clear errors if validation passes
     setValidationErrors([]);
+    if (validation.advisorNotes.length === 0) {
+      setAdvisorNotes([]);
+    }
 
     // Additional checks
     if (!transactionMode || !transactionMode.mode) {
@@ -260,6 +309,8 @@ function OrderManagementPageContent() {
       const responseData = await response.json() as {success: boolean, message: string, data: Order};
 
       if (responseData.success && responseData.data) {
+        const cartSnapshot = cartItems.map(item => ({ ...item }));
+        const totalAmount = cartSnapshot.reduce((sum, item) => sum + item.amount, 0);
         toast({
           title: 'Order Submitted Successfully',
           description: `Order ${responseData.data.modelOrderId} has been submitted and is pending approval.`,
@@ -268,7 +319,6 @@ function OrderManagementPageContent() {
         // Allocate to goal if selected
         if (selectedGoalId && responseData.data.id && clientId) {
           try {
-            const totalAmount = cartItems.reduce((sum, item) => sum + item.amount, 0);
             await apiRequest('POST', `/api/goals/${selectedGoalId}/allocate`, {
               transactionId: responseData.data.id,
               amount: totalAmount,
@@ -292,7 +342,8 @@ function OrderManagementPageContent() {
         // Clear validation messages
         setValidationErrors([]);
         setValidationWarnings([]);
-        
+        setAdvisorNotes([]);
+
         // Reset form
         actions.clearCart();
         setTransactionMode(null);
@@ -303,9 +354,28 @@ function OrderManagementPageContent() {
 
         setSelectedGoalId(null);
 
-        // Navigate to order confirmation page
+        // Prepare client-friendly summary
         if (responseData.data.id) {
-          window.location.hash = `#/order-management/orders/${responseData.data.id}/confirmation`;
+          setConfirmationSummary({
+            orderId: responseData.data.id,
+            modelOrderId: responseData.data.modelOrderId,
+            clientId,
+            totalAmount,
+            transactionMode: transactionMode?.mode || 'Not specified',
+            goalReference: selectedGoalId || undefined,
+            items: cartSnapshot.map(item => ({
+              schemeName: item.schemeName,
+              transactionType: item.transactionType,
+              amount: item.amount,
+            })),
+            complianceNotes: validation.advisorNotes,
+            portfolioHighlights:
+              state.portfolioData?.impactPreview?.changes?.map(change =>
+                `${change.category}: ${change.change > 0 ? '+' : ''}${change.change.toFixed(2)}%`
+              ) || [],
+          });
+          setPendingOrderId(responseData.data.id);
+          setConfirmationDialogOpen(true);
         }
       }
     } catch (error: any) {
@@ -447,6 +517,36 @@ function OrderManagementPageContent() {
             </Card>
           )}
 
+          {/* Compliance Advisor Notes */}
+          {advisorNotes.length > 0 && (
+            <Card className="border-primary/40 bg-primary/5" role="status" aria-live="polite" aria-atomic="true">
+              <CardContent className="pt-4 sm:pt-6">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-semibold text-primary flex items-center gap-2 text-sm sm:text-base md:text-lg">
+                      <ShieldCheck className="h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" aria-hidden="true" />
+                      <span>AI Compliance Advisors ({advisorNotes.length})</span>
+                    </h3>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setAdvisorNotes([])}
+                      aria-label="Dismiss compliance advisor notes"
+                      className="h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0 touch-manipulation"
+                    >
+                      <X className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
+                    </Button>
+                  </div>
+                  <ul className="list-disc list-inside space-y-1 text-xs sm:text-sm md:text-base text-primary">
+                    {advisorNotes.map((note, index) => (
+                      <li key={index} className="pl-1 sm:pl-2 break-words">{note}</li>
+                    ))}
+                  </ul>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <TabsContent value="products" className="space-y-3 sm:space-y-4 md:space-y-6">
             {/* Quick Actions Bar */}
             <div className="flex flex-wrap gap-2 sm:gap-3">
@@ -514,6 +614,7 @@ function OrderManagementPageContent() {
                       onOpenChange={(open) => setAddToCartDialog({ open, product: open ? addToCartDialog.product : null })}
                       onAddToCart={handleConfirmAddToCart}
                       existingHoldings={[]} // TODO: Fetch from API based on selected client
+                      onPreviewAllocation={(item, product) => actions.previewOptimizedAllocation({ ...item }, product)}
                     />
                   </CardContent>
                 </Card>
@@ -826,6 +927,107 @@ function OrderManagementPageContent() {
             }}
           />
         )}
+
+        {/* Confirmation Summary Dialog */}
+        <Dialog
+          open={confirmationDialogOpen}
+          onOpenChange={(open) => {
+            setConfirmationDialogOpen(open);
+            if (!open) {
+              setPendingOrderId(null);
+            }
+          }}
+        >
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Order Summary</DialogTitle>
+              <DialogDescription>
+                {confirmationSummary
+                  ? `Order ${confirmationSummary.modelOrderId} submitted successfully. Review the highlights before proceeding to confirmation.`
+                  : 'Order submitted successfully.'}
+              </DialogDescription>
+            </DialogHeader>
+            {confirmationSummary && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Key Details</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-sm space-y-1">
+                      <p><span className="font-semibold">Order ID:</span> {confirmationSummary.modelOrderId}</p>
+                      <p><span className="font-semibold">Client:</span> {confirmationSummary.clientId ?? 'Unassigned'}</p>
+                      <p><span className="font-semibold">Transaction Mode:</span> {confirmationSummary.transactionMode}</p>
+                      <p><span className="font-semibold">Total Amount:</span> ₹{confirmationSummary.totalAmount.toLocaleString('en-IN')}</p>
+                      {confirmationSummary.goalReference && (
+                        <p><span className="font-semibold">Goal Allocation:</span> {confirmationSummary.goalReference}</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Portfolio Highlights</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-sm">
+                      {confirmationSummary.portfolioHighlights.length > 0 ? (
+                        <ul className="list-disc list-inside space-y-1">
+                          {confirmationSummary.portfolioHighlights.map((highlight, index) => (
+                            <li key={index}>{highlight}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p>No significant allocation shifts detected.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Line Items</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    {confirmationSummary.items.map((item, index) => (
+                      <div key={index} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                        <div>
+                          <p className="font-semibold">{item.schemeName}</p>
+                          <p className="text-muted-foreground text-xs uppercase tracking-wide">{item.transactionType}</p>
+                        </div>
+                        <div className="font-semibold">₹{item.amount.toLocaleString('en-IN')}</div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+                {confirmationSummary.complianceNotes.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Compliance Advisors</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-sm space-y-1">
+                      {confirmationSummary.complianceNotes.map((note, index) => (
+                        <p key={index}>• {note}</p>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
+            <DialogFooter className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirmationDialogOpen(false)}>
+                Close
+              </Button>
+              <Button
+                onClick={() => {
+                  if (pendingOrderId) {
+                    window.location.hash = `#/order-management/orders/${pendingOrderId}/confirmation`;
+                  }
+                  setConfirmationDialogOpen(false);
+                }}
+              >
+                View Confirmation
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
