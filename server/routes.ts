@@ -689,19 +689,223 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Talking Points routes
   app.get('/api/talking-points', async (req: Request, res: Response) => {
     console.log('=== TALKING POINTS API CALLED ===');
+
+    const normalizeText = (value: string | null | undefined) =>
+      (value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const buildSegmentKeywords = (segmentType: string, segmentValue: string) => {
+      const base = normalizeText(segmentValue);
+      const keywords = new Set<string>();
+      if (base) {
+        keywords.add(base);
+        base.split(' ').forEach((token) => token && keywords.add(token));
+      }
+
+      const enriched: Record<string, string[]> = {
+        tier: base.includes('platinum')
+          ? ['premium', 'priority', 'hnw', 'uhnw', 'private banking']
+          : base.includes('gold')
+            ? ['affluent', 'mass affluent']
+            : base.includes('silver')
+              ? ['emerging', 'mass market']
+              : [],
+        risk_profile: base.includes('conservative')
+          ? ['capital protection', 'low risk', 'steady income']
+          : base.includes('moderate')
+            ? ['balanced', 'core allocation']
+            : base.includes('aggressive')
+              ? ['growth', 'high risk', 'equity heavy']
+              : [],
+        aum_band: base.includes('50l') || base.includes('1cr') || base.includes('> ₹50l')
+          ? ['high net worth', 'large portfolio', 'premium']
+          : base.includes('10l')
+            ? ['growing portfolio', 'mid aum']
+            : base.includes('1l')
+              ? ['starter portfolio', 'new investor']
+              : [],
+      };
+
+      (enriched[segmentType as keyof typeof enriched] || []).forEach((keyword) => {
+        const normalized = normalizeText(keyword);
+        if (normalized) keywords.add(normalized);
+      });
+
+      return Array.from(keywords).filter(Boolean);
+    };
+
+    const evaluateValidity = (validUntil: string | null | undefined) => {
+      const now = Date.now();
+      let status: 'active' | 'expiring_soon' | 'expired' = 'active';
+      let expiresInDays: number | null = null;
+      let refreshPrompt: string | null = null;
+      let freshnessModifier = 1;
+
+      if (validUntil) {
+        const expiryDate = new Date(validUntil);
+        if (!Number.isNaN(expiryDate.getTime())) {
+          const diffMs = expiryDate.getTime() - now;
+          expiresInDays = diffMs / (1000 * 60 * 60 * 24);
+
+          if (expiresInDays < 0) {
+            status = 'expired';
+            freshnessModifier = 0.1;
+          } else if (expiresInDays <= 3) {
+            status = 'expiring_soon';
+            refreshPrompt = `Refresh this talking point – it expires in ${Math.max(0, Math.ceil(expiresInDays))} day${Math.ceil(expiresInDays) === 1 ? '' : 's'}.`;
+            const ratio = Math.max(0, Math.min(1, expiresInDays / 3));
+            freshnessModifier = 0.6 + 0.4 * ratio;
+          } else {
+            const ratio = Math.max(0, Math.min(1, expiresInDays / 30));
+            freshnessModifier = 0.7 + 0.3 * ratio;
+          }
+        }
+      }
+
+      return { status, expiresInDays, refreshPrompt, freshnessModifier };
+    };
+
     try {
-      const { data, error } = await supabaseServer
-        .from('talking_points')
-        .select('*')
-        .eq('is_active', true)
-        .order('relevance_score', { ascending: false })
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      
-      console.log('Talking points API response:', data?.length || 0, 'items');
-      console.log('First item:', data?.[0]);
-      res.json(data || []);
+      if (!(req.session as any).userId) {
+        (req.session as any).userId = 1;
+      }
+
+      const userId = (req.session as any).userId as number;
+
+      const [{ data: talkingPointsData, error: talkingPointsError }, { data: segmentData, error: segmentError }] = await Promise.all([
+        supabaseServer
+          .from('talking_points')
+          .select('*')
+          .eq('is_active', true),
+        supabaseServer
+          .from('customer_segment_analysis')
+          .select('segment_type, segment_value, client_count, total_aum, average_aum, revenue_contribution, transaction_frequency, retention_rate')
+          .eq('user_id', userId),
+      ]);
+
+      if (talkingPointsError) throw talkingPointsError;
+      if (segmentError) throw segmentError;
+
+      const segments = (segmentData || []).filter((segment: any) => segment.segment_type && segment.segment_value);
+
+      const totals = segments.reduce(
+        (acc, segment: any) => {
+          const clientCount = Number(segment.client_count || 0);
+          const totalAum = Number(segment.total_aum || 0);
+          const revenue = Number(segment.revenue_contribution || 0);
+          const frequency = Number(segment.transaction_frequency || 0);
+          const retention = Number(segment.retention_rate || 0);
+
+          return {
+            clientCount: acc.clientCount + clientCount,
+            totalAum: Math.max(acc.totalAum, totalAum),
+            revenue: Math.max(acc.revenue, revenue),
+            frequency: Math.max(acc.frequency, frequency),
+            retention: Math.max(acc.retention, retention),
+          };
+        },
+        { clientCount: 0, totalAum: 0, revenue: 0, frequency: 0, retention: 0 }
+      );
+
+      const segmentProfiles = segments.map((segment: any) => {
+        const normalizedValue = normalizeText(segment.segment_value);
+        const keywords = buildSegmentKeywords(segment.segment_type, segment.segment_value);
+        const clientShare = totals.clientCount > 0 ? Number(segment.client_count || 0) / totals.clientCount : 0;
+        const aumShare = totals.totalAum > 0 ? Number(segment.total_aum || 0) / totals.totalAum : 0;
+        const revenueShare = totals.revenue > 0 ? Number(segment.revenue_contribution || 0) / totals.revenue : 0;
+        const activityScore = totals.frequency > 0 ? Number(segment.transaction_frequency || 0) / totals.frequency : 0;
+        const retentionScore = Number(segment.retention_rate || 0) / 100;
+        const weight = Math.max(0, Math.min(1, clientShare * 0.5 + aumShare * 0.25 + revenueShare * 0.15 + activityScore * 0.05 + retentionScore * 0.05));
+
+        return {
+          ...segment,
+          normalizedValue,
+          keywords,
+          weight,
+        };
+      });
+
+      const scoredTalkingPoints = (talkingPointsData || []).map((point: any) => {
+        const baseScore = Number(point.relevance_score ?? 5);
+        const content = normalizeText(`${point.title || ''} ${point.summary || ''} ${point.detailed_content || ''}`);
+        const tags = Array.isArray(point.tags) ? point.tags.map((tag: string) => normalizeText(tag)) : [];
+
+        let segmentBoost = 0;
+        const matches: any[] = [];
+
+        segmentProfiles.forEach((segment) => {
+          let matchConfidence = 0;
+          let matchSource: 'tag' | 'text' | 'synonym' = 'text';
+
+          if (tags.some((tag) => tag && (tag === segment.normalizedValue || segment.keywords.includes(tag)))) {
+            matchConfidence = 1;
+            matchSource = 'tag';
+          } else if (segment.keywords.some((keyword) => keyword && content.includes(keyword))) {
+            matchConfidence = 0.65;
+            matchSource = 'text';
+          } else if (segment.normalizedValue && content.includes(segment.normalizedValue)) {
+            matchConfidence = 0.5;
+            matchSource = 'synonym';
+          }
+
+          if (matchConfidence > 0) {
+            const weightBoost = segment.weight * matchConfidence * 10;
+            segmentBoost += weightBoost;
+            matches.push({
+              segment_type: segment.segment_type,
+              segment_value: segment.segment_value,
+              confidence: Math.round(matchConfidence * 100) / 100,
+              weight: Math.round(weightBoost * 100) / 100,
+              match_source: matchSource,
+            });
+          }
+        });
+
+        const { status, expiresInDays, refreshPrompt, freshnessModifier } = evaluateValidity(point.valid_until);
+        const freshnessAdjustedBase = baseScore * freshnessModifier;
+        const personalizedScore = Number((freshnessAdjustedBase + segmentBoost).toFixed(2));
+
+        return {
+          ...point,
+          personalized_score: personalizedScore,
+          status,
+          expires_in_days: expiresInDays !== null ? Number(expiresInDays.toFixed(2)) : null,
+          refresh_prompt: refreshPrompt,
+          auto_archived: status === 'expired',
+          segment_matches: matches.sort((a, b) => b.weight - a.weight).slice(0, 5),
+          score_breakdown: {
+            base_score: baseScore,
+            freshness_modifier: Number(freshnessModifier.toFixed(2)),
+            segment_boost: Number(segmentBoost.toFixed(2)),
+          },
+        };
+      });
+
+      const statusOrder: Record<string, number> = { active: 0, expiring_soon: 1, expired: 2 };
+
+      const sortedTalkingPoints = scoredTalkingPoints
+        .sort((a: any, b: any) => {
+          const aStatusRank = statusOrder[a.status as keyof typeof statusOrder] ?? 0;
+          const bStatusRank = statusOrder[b.status as keyof typeof statusOrder] ?? 0;
+          if (a.auto_archived && !b.auto_archived) return 1;
+          if (!a.auto_archived && b.auto_archived) return -1;
+          if (aStatusRank !== bStatusRank) return aStatusRank - bStatusRank;
+
+          const scoreDiff = Number(b.personalized_score || 0) - Number(a.personalized_score || 0);
+          if (scoreDiff !== 0) return scoreDiff;
+
+          const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return bCreated - aCreated;
+        });
+
+      console.log('Talking points API response:', sortedTalkingPoints.length, 'items');
+      console.log('First item:', sortedTalkingPoints[0]);
+
+      res.json(sortedTalkingPoints);
     } catch (error) {
       console.error('Get talking points error:', error);
       res.status(500).json({ error: 'Failed to fetch talking points' });
