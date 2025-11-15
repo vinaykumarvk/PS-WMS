@@ -1,6 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { pool, db } from './db';
 import { communications } from '@shared/schema';
+import {
+  bucketInteractionTime,
+  calculateDurationMinutes,
+  runNlpTaggingPipeline,
+  scoreInteractionSuccess,
+} from './services/nlp-tagging';
+import { z } from 'zod';
 import { supabaseServer } from './lib/supabase';
 
 // Create a router to handle communication-related routes
@@ -63,6 +70,274 @@ router.post('/api/communications', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error creating communication:', error);
     res.status(500).json({ error: 'Failed to create communication' });
+  }
+});
+
+const interactionsQuerySchema = z.object({
+  clientId: z.coerce.number().optional(),
+  limit: z.coerce.number().min(1).max(200).default(50),
+});
+
+const createInteractionSchema = z.object({
+  clientId: z.coerce.number(),
+  initiatedBy: z.coerce.number(),
+  communicationType: z.string(),
+  direction: z.string(),
+  channel: z.string().optional(),
+  subject: z.string().optional(),
+  summary: z.string().optional(),
+  notes: z.string().optional(),
+  startTime: z.string().or(z.date()),
+  endTime: z.string().or(z.date()).optional().nullable(),
+  duration: z.number().optional().nullable(),
+  status: z.string().optional(),
+  followupRequired: z.boolean().optional(),
+  tags: z.array(z.string()).optional(),
+  sentiment: z.string().optional(),
+});
+
+type InteractionRow = {
+  id: number;
+  client_id: number;
+  initiated_by: number | null;
+  start_time: string;
+  end_time: string | null;
+  duration: number | null;
+  communication_type: string;
+  channel: string | null;
+  direction: string;
+  subject: string | null;
+  summary: string | null;
+  notes: string | null;
+  sentiment: string | null;
+  follow_up_required: boolean | null;
+  follow_up_date?: string | null;
+  tags: string[] | null;
+  status: string | null;
+};
+
+function parseTags(rawTags: any): string[] {
+  if (!rawTags) return [];
+  if (Array.isArray(rawTags)) return rawTags.filter(Boolean);
+  if (typeof rawTags === 'string') {
+    return rawTags
+      .replace(/[{}]/g, '')
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function deriveSummary(rows: InteractionRow[]) {
+  const byType: Record<string, number> = {};
+  const byChannel: Record<string, number> = {};
+  const sentimentCounts: Record<string, number> = {};
+  const tagCounts: Record<string, number> = {};
+  let durationTotal = 0;
+  let durationCount = 0;
+  let followUps = 0;
+
+  for (const row of rows) {
+    byType[row.communication_type] = (byType[row.communication_type] || 0) + 1;
+    const channelKey = row.channel || 'unspecified';
+    byChannel[channelKey] = (byChannel[channelKey] || 0) + 1;
+
+    const sentimentKey = row.sentiment || 'neutral';
+    sentimentCounts[sentimentKey] = (sentimentCounts[sentimentKey] || 0) + 1;
+
+    const tags = parseTags(row.tags);
+    tags.forEach((tag) => {
+      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    });
+
+    if (typeof row.duration === 'number' && !Number.isNaN(row.duration)) {
+      durationTotal += row.duration;
+      durationCount += 1;
+    }
+
+    if (row.follow_up_required) {
+      followUps += 1;
+    }
+  }
+
+  const topTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([tag, count]) => ({ tag, count }));
+
+  return {
+    byType,
+    byChannel,
+    sentiment: sentimentCounts,
+    averageDuration: durationCount > 0 ? Math.round((durationTotal / durationCount) * 10) / 10 : null,
+    followUps,
+    topTags,
+  };
+}
+
+function recommendMeetingWindow(rows: InteractionRow[]) {
+  if (rows.length === 0) return null;
+
+  const buckets = new Map<string, { score: number; count: number; lastInteraction?: string }>();
+
+  for (const row of rows) {
+    if (!row.start_time) continue;
+    const bucket = bucketInteractionTime(row.start_time);
+    const key = `${bucket.day}::${bucket.window}`;
+    const duration = typeof row.duration === 'number' ? row.duration : calculateDurationMinutes(row.start_time, row.end_time);
+    const score = scoreInteractionSuccess(row.sentiment, duration);
+    const current = buckets.get(key) || { score: 0, count: 0 };
+    current.score += score;
+    current.count += 1;
+    if (!current.lastInteraction || new Date(row.start_time) > new Date(current.lastInteraction)) {
+      current.lastInteraction = row.start_time;
+    }
+    buckets.set(key, current);
+  }
+
+  if (buckets.size === 0) return null;
+
+  const sorted = Array.from(buckets.entries()).sort((a, b) => b[1].score - a[1].score);
+  const [bestKey, bestData] = sorted[0];
+  const [day, window] = bestKey.split('::');
+  const maxScore = sorted[0][1].score;
+  const minScore = sorted[sorted.length - 1][1].score;
+  const confidenceRange = maxScore - minScore || 1;
+  const confidence = Math.min(1, bestData.score / (maxScore + confidenceRange));
+
+  return {
+    day,
+    window,
+    confidence: Math.round(confidence * 100) / 100,
+    supportingInteractions: bestData.count,
+    lastSuccessfulInteraction: bestData.lastInteraction || null,
+  };
+}
+
+router.get('/api/interactions', async (req: Request, res: Response) => {
+  try {
+    const parsed = interactionsQuerySchema.safeParse({
+      clientId: req.query.clientId,
+      limit: req.query.limit,
+    });
+
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
+    }
+
+    const { clientId, limit } = parsed.data;
+
+    const params: any[] = [];
+    let whereClause = '';
+    if (clientId) {
+      params.push(clientId);
+      whereClause = `WHERE c.client_id = $${params.length}`;
+    }
+
+    params.push(limit);
+
+    const { rows } = await pool.query<InteractionRow>(
+      `SELECT c.id, c.client_id, c.initiated_by, c.start_time, c.end_time, c.duration,
+              c.communication_type, c.channel, c.direction, c.subject, c.summary,
+              c.notes, c.sentiment, c.follow_up_required, c.follow_up_date, c.tags, c.status
+         FROM communications c
+         ${whereClause}
+         ORDER BY c.start_time DESC
+         LIMIT $${params.length}`,
+      params,
+    );
+
+    const summary = deriveSummary(rows);
+    const lastInteraction = rows[0] || null;
+    const recommendation = recommendMeetingWindow(rows);
+
+    res.json({
+      clientId: clientId || null,
+      totalInteractions: rows.length,
+      interactions: rows.map((row) => ({
+        ...row,
+        tags: parseTags(row.tags),
+      })),
+      summary: {
+        byType: summary.byType,
+        byChannel: summary.byChannel,
+        sentiment: summary.sentiment,
+        averageDuration: summary.averageDuration,
+        followUps: summary.followUps,
+      },
+      topTags: summary.topTags,
+      lastInteraction,
+      recommendation,
+    });
+  } catch (error) {
+    console.error('Error fetching interactions summary:', error);
+    res.status(500).json({ error: 'Failed to fetch interactions' });
+  }
+});
+
+router.post('/api/interactions', async (req: Request, res: Response) => {
+  try {
+    const parsed = createInteractionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid interaction payload', details: parsed.error.flatten() });
+    }
+
+    const data = parsed.data;
+    const durationMinutes =
+      typeof data.duration === 'number' && !Number.isNaN(data.duration)
+        ? data.duration
+        : calculateDurationMinutes(data.startTime, data.endTime);
+
+    const nlpResult = runNlpTaggingPipeline({
+      subject: data.subject,
+      summary: data.summary,
+      notes: data.notes,
+      channel: data.channel,
+      durationMinutes,
+    });
+
+    const combinedTags = Array.from(new Set([...(data.tags || []), ...nlpResult.tags]));
+    const sentiment = data.sentiment || nlpResult.sentiment;
+
+    const { rows } = await pool.query<InteractionRow>(
+      `INSERT INTO communications (
+        client_id, initiated_by, start_time, end_time, duration,
+        communication_type, channel, direction, subject, summary,
+        notes, sentiment, tags, follow_up_required, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      RETURNING *`,
+      [
+        data.clientId,
+        data.initiatedBy,
+        data.startTime,
+        data.endTime ?? null,
+        durationMinutes,
+        data.communicationType,
+        data.channel || null,
+        data.direction,
+        data.subject || '',
+        data.summary || '',
+        data.notes || null,
+        sentiment,
+        combinedTags,
+        data.followupRequired ?? false,
+        data.status || 'completed',
+      ],
+    );
+
+    const created = rows[0];
+
+    res.status(201).json({
+      interaction: {
+        ...created,
+        tags: parseTags(created.tags),
+      },
+      nlp: nlpResult,
+    });
+  } catch (error) {
+    console.error('Error creating interaction:', error);
+    res.status(500).json({ error: 'Failed to create interaction' });
   }
 });
 
