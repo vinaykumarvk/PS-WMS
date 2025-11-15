@@ -19,6 +19,8 @@ interface TalkingPoint {
   theme?: string;
   relevance_score?: number;
   created_at?: string;
+  personalized_score?: number;
+  auto_archived?: boolean;
 }
 
 interface AnalyticsSnapshot {
@@ -82,7 +84,7 @@ function buildSummary(
   preferences: BriefingPreferences
 ): DashboardBriefing {
   const topAnnouncement = announcements?.[0];
-  const latestTalkingPoint = talkingPoints?.[0];
+  const latestTalkingPoint = talkingPoints?.find((point) => !point.auto_archived) ?? talkingPoints?.[0];
   const highlightCount = preferences.depth === "concise" ? 2 : preferences.depth === "standard" ? 3 : 4;
   const metrics = analytics.metrics.slice(0, 3).map(formatMetric);
   const topClient = analytics.topClients?.[0];

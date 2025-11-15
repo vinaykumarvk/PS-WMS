@@ -52,7 +52,7 @@ export function useNavigationIndicators(): NavigationIndicators {
       const createdDate = new Date(point.created_at)
       const threeDaysAgo = new Date()
       threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
-      return createdDate >= threeDaysAgo && point.is_active
+      return createdDate >= threeDaysAgo && point.is_active && !point.auto_archived
     })
 
   const hasRecentAnnouncements =
