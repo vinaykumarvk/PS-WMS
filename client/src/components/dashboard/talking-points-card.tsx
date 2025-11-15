@@ -2,18 +2,21 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { format } from "date-fns";
-import { 
-  ChevronRight, 
+import { formatDistanceToNow } from "date-fns";
+import {
+  ChevronRight,
   ChevronDown,
-  TrendingUp, 
-  AlertTriangle, 
-  Building, 
-  Globe, 
-  Lightbulb 
+  TrendingUp,
+  AlertTriangle,
+  Building,
+  Globe,
+  Lightbulb,
+  RefreshCcw,
 } from "lucide-react";
+import type { TalkingPoint } from "@/types/talking-point";
 
 const categoryIcons = {
   market_analysis: TrendingUp,
@@ -28,19 +31,22 @@ export function TalkingPointsCard() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
-  const { data: talkingPoints = [], isLoading } = useQuery({
+  const { data: talkingPoints = [], isLoading, refetch } = useQuery({
     queryKey: ['/api/talking-points'],
   });
 
+  const enhancedPoints = Array.isArray(talkingPoints) ? (talkingPoints as TalkingPoint[]) : [];
+  const activePoints = enhancedPoints.filter((point) => !point.auto_archived);
+
   // Group talking points by category
-  const groupedPoints = talkingPoints.reduce((groups: any, point: any) => {
+  const groupedPoints = activePoints.reduce((groups: Record<string, TalkingPoint[]>, point) => {
     const category = point.category || 'general';
     if (!groups[category]) {
       groups[category] = [];
     }
     groups[category].push(point);
     return groups;
-  }, {});
+  }, {} as Record<string, TalkingPoint[]>);
 
   const categories = {
     market_analysis: {
@@ -81,6 +87,8 @@ export function TalkingPointsCard() {
   };
 
   const totalTalkingPoints = Object.values(categories).reduce((sum, category) => sum + category.count, 0);
+
+  const expiringSoon = activePoints.filter((point) => point.status === 'expiring_soon');
 
   const toggleCategory = (categoryKey: string) => {
     const newExpanded = new Set(expandedCategories);
@@ -125,7 +133,26 @@ export function TalkingPointsCard() {
         
         <CollapsibleContent>
           <CardContent className="space-y-3 pt-0">
-            <div className="px-3 sm:px-4 py-3 sm:py-4">
+            <div className="px-3 sm:px-4 py-3 sm:py-4 space-y-3">
+              {expiringSoon.length > 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3 text-xs text-muted-foreground">
+                  <RefreshCcw className="h-4 w-4 text-primary mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-primary">
+                      {expiringSoon.length === 1
+                        ? 'One insight is about to expire'
+                        : `${expiringSoon.length} insights are about to expire`}
+                    </p>
+                    <p>
+                      Refresh the content to keep your client talking points current.
+                      <Button variant="link" className="h-auto px-1 text-primary" onClick={() => refetch()}>
+                        Refresh now
+                      </Button>
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center gap-3">
                 <div className="text-left">
                   <h3 className="font-semibold text-sm text-muted-foreground leading-tight">Market Insights</h3>
@@ -183,12 +210,15 @@ export function TalkingPointsCard() {
                                   No {category.title.toLowerCase()} at this time
                                 </div>
                               ) : (
-                                category.items.slice(0, 5).map((item: any, index: number) => {
+                                category.items
+                                  .sort((a, b) => (Number(b.personalized_score || 0) - Number(a.personalized_score || 0)))
+                                  .slice(0, 5)
+                                  .map((item, index: number) => {
                                   const isItemExpanded = expandedItems.has(item.id?.toString() || index.toString());
-                                  
+
                                   return (
-                                    <div 
-                                      key={item.id || index} 
+                                    <div
+                                      key={item.id || index}
                                       className="bg-background border border-border rounded p-3 text-sm hover:bg-muted/50 transition-colors cursor-pointer"
                                       onClick={() => {
                                         const itemKey = item.id?.toString() || index.toString();
@@ -201,8 +231,25 @@ export function TalkingPointsCard() {
                                         setExpandedItems(newExpanded);
                                       }}
                                     >
-                                      <div className="font-medium text-foreground mb-1">{item.title}</div>
-                                      
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                          <div className="font-medium text-foreground mb-1">{item.title}</div>
+                                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                            <span>Score: {item.personalized_score?.toFixed?.(2) ?? item.personalized_score ?? item.relevance_score}</span>
+                                            {item.status === 'expiring_soon' && item.valid_until && (
+                                              <Badge variant="outline" className="border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-500/10">
+                                                Expires {formatDistanceToNow(new Date(item.valid_until), { addSuffix: true })}
+                                              </Badge>
+                                            )}
+                                          </div>
+                                        </div>
+                                        {item.refresh_prompt && (
+                                          <Badge variant="secondary" className="text-[10px] leading-tight text-primary border-primary/40 bg-primary/10">
+                                            {item.refresh_prompt}
+                                          </Badge>
+                                        )}
+                                      </div>
+
                                       {!isItemExpanded && item.summary && (
                                         <div className="text-foreground mb-2 text-xs leading-relaxed font-medium bg-muted/30 px-2 py-1 rounded">
                                           Summary: {item.summary}
@@ -223,6 +270,16 @@ export function TalkingPointsCard() {
                                             </div>
                                           )}
                                           
+                                          {item.segment_matches && item.segment_matches.length > 0 && (
+                                            <div className="flex flex-wrap gap-1">
+                                              {item.segment_matches.slice(0, 3).map((match, matchIndex) => (
+                                                <Badge key={`${item.id}-match-${matchIndex}`} variant="outline" className="text-[11px]">
+                                                  {match.segment_value}
+                                                </Badge>
+                                              ))}
+                                            </div>
+                                          )}
+
                                           {item.tags && item.tags.length > 0 && (
                                             <div className="flex flex-wrap gap-1">
                                               {item.tags.map((tag: string, tagIndex: number) => (
@@ -234,9 +291,12 @@ export function TalkingPointsCard() {
                                           )}
                                         </div>
                                       )}
-                                      
+
                                       <div className="text-muted-foreground text-xs mt-2">
-                                        Relevance: {item.relevance_score}/10 • {item.source}
+                                        {item.relevance_score && (
+                                          <span className="mr-2">Baseline: {item.relevance_score}/10</span>
+                                        )}
+                                        {item.source}
                                       </div>
                                     </div>
                                   );

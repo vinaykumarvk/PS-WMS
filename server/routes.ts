@@ -4,7 +4,9 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { db } from "./db";
 import { eq, sql, and, gt, desc, or, inArray } from "drizzle-orm";
-import { clients, prospects, transactions, performanceIncentives, clientComplaints, products, aiAdviceInteractions } from "@shared/schema";
+import { clients, prospects, transactions, performanceIncentives, clientComplaints, products } from "@shared/schema";
+import { calculateClientInsights, semanticSearchClients, generateClientDraft } from "./services/client-ai-service";
+import type { ClientDraftRequest } from "@shared/types/insights";
 import communicationsRouter from "./communications";
 import portfolioReportRouter from "./portfolio-report";
 import suggestionsRouter from "./routes/suggestions";
@@ -14,10 +16,13 @@ import bulkOrdersRouter from "./routes/bulk-orders";
 import integrationsRouter from "./routes/integrations";
 import { supabaseServer } from "./lib/supabase";
 import { addClient, updateFinancialProfile, saveClientDraft, getClientDraft } from "./routes/clients";
+import { registerModelOrchestrationRoutes } from "./routes/model-orchestration";
 import * as goalRoutes from "./routes/goals";
 import * as automationRoutes from "./routes/automation";
 import { triggerWebhooks } from "./services/webhook-service";
 import { TaskAlertHubService } from "./services/task-alert-hub-service";
+import { enrichTasksWithIntelligence } from "./services/task-intelligence-service";
+import { interpretTaskInput } from "./services/task-intent-service";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import { z } from "zod";
@@ -573,6 +578,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/clients/search/semantic', async (req: Request, res: Response) => {
+    try {
+      if (!(req.session as any).userId) {
+        (req.session as any).userId = 1;
+        (req.session as any).userRole = 'admin';
+      }
+
+      const query = (req.query.q as string | undefined)?.trim() ?? '';
+      if (query.length < 3) {
+        return res.json([]);
+      }
+
+      const userId = (req.session as any).userId;
+      const userRole = (req.session as any).userRole;
+
+      const baseQuery = supabaseServer
+        .from('clients')
+        .select('id, full_name, tier, email, phone, aum_value, risk_profile, alert_count, profile_status, incomplete_sections, investment_horizon, net_worth, last_contact_date, last_transaction_date');
+
+      const { data, error } = (userRole === 'admin' || userRole === 'supervisor')
+        ? await baseQuery
+        : await baseQuery.eq('assigned_to', userId);
+
+      if (error) {
+        return res.status(500).json({ message: error.message });
+      }
+
+      const clientsForSearch = (data || []).map((row: any) => ({
+        id: row.id,
+        fullName: row.full_name,
+        tier: row.tier,
+        email: row.email,
+        phone: row.phone,
+        aumValue: row.aum_value,
+        riskProfile: row.risk_profile,
+        alertCount: row.alert_count,
+        profileStatus: row.profile_status,
+        incompleteSections: row.incomplete_sections,
+        investmentHorizon: row.investment_horizon,
+        netWorth: row.net_worth,
+        lastContactDate: row.last_contact_date,
+        lastTransactionDate: row.last_transaction_date,
+      }));
+
+      const results = semanticSearchClients(query, clientsForSearch);
+      res.json(results);
+    } catch (error) {
+      console.error('Semantic client search error:', error);
+      res.status(500).json({ message: 'Failed to run semantic search' });
+    }
+  });
+
   // Test endpoint to verify routing works
   app.get('/api/test-products', (req: Request, res: Response) => {
     console.log('TEST ENDPOINT HIT!');
@@ -699,19 +756,223 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Talking Points routes
   app.get('/api/talking-points', async (req: Request, res: Response) => {
     console.log('=== TALKING POINTS API CALLED ===');
+
+    const normalizeText = (value: string | null | undefined) =>
+      (value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const buildSegmentKeywords = (segmentType: string, segmentValue: string) => {
+      const base = normalizeText(segmentValue);
+      const keywords = new Set<string>();
+      if (base) {
+        keywords.add(base);
+        base.split(' ').forEach((token) => token && keywords.add(token));
+      }
+
+      const enriched: Record<string, string[]> = {
+        tier: base.includes('platinum')
+          ? ['premium', 'priority', 'hnw', 'uhnw', 'private banking']
+          : base.includes('gold')
+            ? ['affluent', 'mass affluent']
+            : base.includes('silver')
+              ? ['emerging', 'mass market']
+              : [],
+        risk_profile: base.includes('conservative')
+          ? ['capital protection', 'low risk', 'steady income']
+          : base.includes('moderate')
+            ? ['balanced', 'core allocation']
+            : base.includes('aggressive')
+              ? ['growth', 'high risk', 'equity heavy']
+              : [],
+        aum_band: base.includes('50l') || base.includes('1cr') || base.includes('> ₹50l')
+          ? ['high net worth', 'large portfolio', 'premium']
+          : base.includes('10l')
+            ? ['growing portfolio', 'mid aum']
+            : base.includes('1l')
+              ? ['starter portfolio', 'new investor']
+              : [],
+      };
+
+      (enriched[segmentType as keyof typeof enriched] || []).forEach((keyword) => {
+        const normalized = normalizeText(keyword);
+        if (normalized) keywords.add(normalized);
+      });
+
+      return Array.from(keywords).filter(Boolean);
+    };
+
+    const evaluateValidity = (validUntil: string | null | undefined) => {
+      const now = Date.now();
+      let status: 'active' | 'expiring_soon' | 'expired' = 'active';
+      let expiresInDays: number | null = null;
+      let refreshPrompt: string | null = null;
+      let freshnessModifier = 1;
+
+      if (validUntil) {
+        const expiryDate = new Date(validUntil);
+        if (!Number.isNaN(expiryDate.getTime())) {
+          const diffMs = expiryDate.getTime() - now;
+          expiresInDays = diffMs / (1000 * 60 * 60 * 24);
+
+          if (expiresInDays < 0) {
+            status = 'expired';
+            freshnessModifier = 0.1;
+          } else if (expiresInDays <= 3) {
+            status = 'expiring_soon';
+            refreshPrompt = `Refresh this talking point – it expires in ${Math.max(0, Math.ceil(expiresInDays))} day${Math.ceil(expiresInDays) === 1 ? '' : 's'}.`;
+            const ratio = Math.max(0, Math.min(1, expiresInDays / 3));
+            freshnessModifier = 0.6 + 0.4 * ratio;
+          } else {
+            const ratio = Math.max(0, Math.min(1, expiresInDays / 30));
+            freshnessModifier = 0.7 + 0.3 * ratio;
+          }
+        }
+      }
+
+      return { status, expiresInDays, refreshPrompt, freshnessModifier };
+    };
+
     try {
-      const { data, error } = await supabaseServer
-        .from('talking_points')
-        .select('*')
-        .eq('is_active', true)
-        .order('relevance_score', { ascending: false })
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      
-      console.log('Talking points API response:', data?.length || 0, 'items');
-      console.log('First item:', data?.[0]);
-      res.json(data || []);
+      if (!(req.session as any).userId) {
+        (req.session as any).userId = 1;
+      }
+
+      const userId = (req.session as any).userId as number;
+
+      const [{ data: talkingPointsData, error: talkingPointsError }, { data: segmentData, error: segmentError }] = await Promise.all([
+        supabaseServer
+          .from('talking_points')
+          .select('*')
+          .eq('is_active', true),
+        supabaseServer
+          .from('customer_segment_analysis')
+          .select('segment_type, segment_value, client_count, total_aum, average_aum, revenue_contribution, transaction_frequency, retention_rate')
+          .eq('user_id', userId),
+      ]);
+
+      if (talkingPointsError) throw talkingPointsError;
+      if (segmentError) throw segmentError;
+
+      const segments = (segmentData || []).filter((segment: any) => segment.segment_type && segment.segment_value);
+
+      const totals = segments.reduce(
+        (acc, segment: any) => {
+          const clientCount = Number(segment.client_count || 0);
+          const totalAum = Number(segment.total_aum || 0);
+          const revenue = Number(segment.revenue_contribution || 0);
+          const frequency = Number(segment.transaction_frequency || 0);
+          const retention = Number(segment.retention_rate || 0);
+
+          return {
+            clientCount: acc.clientCount + clientCount,
+            totalAum: Math.max(acc.totalAum, totalAum),
+            revenue: Math.max(acc.revenue, revenue),
+            frequency: Math.max(acc.frequency, frequency),
+            retention: Math.max(acc.retention, retention),
+          };
+        },
+        { clientCount: 0, totalAum: 0, revenue: 0, frequency: 0, retention: 0 }
+      );
+
+      const segmentProfiles = segments.map((segment: any) => {
+        const normalizedValue = normalizeText(segment.segment_value);
+        const keywords = buildSegmentKeywords(segment.segment_type, segment.segment_value);
+        const clientShare = totals.clientCount > 0 ? Number(segment.client_count || 0) / totals.clientCount : 0;
+        const aumShare = totals.totalAum > 0 ? Number(segment.total_aum || 0) / totals.totalAum : 0;
+        const revenueShare = totals.revenue > 0 ? Number(segment.revenue_contribution || 0) / totals.revenue : 0;
+        const activityScore = totals.frequency > 0 ? Number(segment.transaction_frequency || 0) / totals.frequency : 0;
+        const retentionScore = Number(segment.retention_rate || 0) / 100;
+        const weight = Math.max(0, Math.min(1, clientShare * 0.5 + aumShare * 0.25 + revenueShare * 0.15 + activityScore * 0.05 + retentionScore * 0.05));
+
+        return {
+          ...segment,
+          normalizedValue,
+          keywords,
+          weight,
+        };
+      });
+
+      const scoredTalkingPoints = (talkingPointsData || []).map((point: any) => {
+        const baseScore = Number(point.relevance_score ?? 5);
+        const content = normalizeText(`${point.title || ''} ${point.summary || ''} ${point.detailed_content || ''}`);
+        const tags = Array.isArray(point.tags) ? point.tags.map((tag: string) => normalizeText(tag)) : [];
+
+        let segmentBoost = 0;
+        const matches: any[] = [];
+
+        segmentProfiles.forEach((segment) => {
+          let matchConfidence = 0;
+          let matchSource: 'tag' | 'text' | 'synonym' = 'text';
+
+          if (tags.some((tag) => tag && (tag === segment.normalizedValue || segment.keywords.includes(tag)))) {
+            matchConfidence = 1;
+            matchSource = 'tag';
+          } else if (segment.keywords.some((keyword) => keyword && content.includes(keyword))) {
+            matchConfidence = 0.65;
+            matchSource = 'text';
+          } else if (segment.normalizedValue && content.includes(segment.normalizedValue)) {
+            matchConfidence = 0.5;
+            matchSource = 'synonym';
+          }
+
+          if (matchConfidence > 0) {
+            const weightBoost = segment.weight * matchConfidence * 10;
+            segmentBoost += weightBoost;
+            matches.push({
+              segment_type: segment.segment_type,
+              segment_value: segment.segment_value,
+              confidence: Math.round(matchConfidence * 100) / 100,
+              weight: Math.round(weightBoost * 100) / 100,
+              match_source: matchSource,
+            });
+          }
+        });
+
+        const { status, expiresInDays, refreshPrompt, freshnessModifier } = evaluateValidity(point.valid_until);
+        const freshnessAdjustedBase = baseScore * freshnessModifier;
+        const personalizedScore = Number((freshnessAdjustedBase + segmentBoost).toFixed(2));
+
+        return {
+          ...point,
+          personalized_score: personalizedScore,
+          status,
+          expires_in_days: expiresInDays !== null ? Number(expiresInDays.toFixed(2)) : null,
+          refresh_prompt: refreshPrompt,
+          auto_archived: status === 'expired',
+          segment_matches: matches.sort((a, b) => b.weight - a.weight).slice(0, 5),
+          score_breakdown: {
+            base_score: baseScore,
+            freshness_modifier: Number(freshnessModifier.toFixed(2)),
+            segment_boost: Number(segmentBoost.toFixed(2)),
+          },
+        };
+      });
+
+      const statusOrder: Record<string, number> = { active: 0, expiring_soon: 1, expired: 2 };
+
+      const sortedTalkingPoints = scoredTalkingPoints
+        .sort((a: any, b: any) => {
+          const aStatusRank = statusOrder[a.status as keyof typeof statusOrder] ?? 0;
+          const bStatusRank = statusOrder[b.status as keyof typeof statusOrder] ?? 0;
+          if (a.auto_archived && !b.auto_archived) return 1;
+          if (!a.auto_archived && b.auto_archived) return -1;
+          if (aStatusRank !== bStatusRank) return aStatusRank - bStatusRank;
+
+          const scoreDiff = Number(b.personalized_score || 0) - Number(a.personalized_score || 0);
+          if (scoreDiff !== 0) return scoreDiff;
+
+          const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return bCreated - aCreated;
+        });
+
+      console.log('Talking points API response:', sortedTalkingPoints.length, 'items');
+      console.log('First item:', sortedTalkingPoints[0]);
+
+      res.json(sortedTalkingPoints);
     } catch (error) {
       console.error('Get talking points error:', error);
       res.status(500).json({ error: 'Failed to fetch talking points' });
@@ -938,27 +1199,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? await baseQuery
         : await baseQuery.eq('assigned_to', userId);
       if (error) return res.status(500).json({ message: error.message });
-      const mapped = (data || []).map((r: any) => ({
-        id: r.id,
-        fullName: r.full_name,
-        initials: r.initials,
-        tier: r.tier,
-        aum: r.aum,
-        aumValue: r.aum_value,
-        email: r.email,
-        phone: r.phone,
-        lastContactDate: r.last_contact_date,
-        lastTransactionDate: r.last_transaction_date,
-        riskProfile: r.risk_profile,
-        yearlyPerformance: r.yearly_performance,
-        alertCount: r.alert_count,
-        createdAt: r.created_at,
-        assignedTo: r.assigned_to,
-        profileStatus: r.profile_status,
-        incompleteSections: r.incomplete_sections,
-        investmentHorizon: r.investment_horizon,
-        netWorth: r.net_worth
-      }));
+      const mapped = (data || []).map((r: any) => {
+        const base = {
+          id: r.id,
+          fullName: r.full_name,
+          initials: r.initials,
+          tier: r.tier,
+          aum: r.aum,
+          aumValue: r.aum_value,
+          email: r.email,
+          phone: r.phone,
+          lastContactDate: r.last_contact_date,
+          lastTransactionDate: r.last_transaction_date,
+          riskProfile: r.risk_profile,
+          yearlyPerformance: r.yearly_performance,
+          alertCount: r.alert_count,
+          createdAt: r.created_at,
+          assignedTo: r.assigned_to,
+          profileStatus: r.profile_status,
+          incompleteSections: r.incomplete_sections,
+          investmentHorizon: r.investment_horizon,
+          netWorth: r.net_worth
+        };
+
+        const insights = calculateClientInsights({
+          id: r.id,
+          fullName: r.full_name,
+          tier: r.tier,
+          aumValue: r.aum_value,
+          email: r.email,
+          phone: r.phone,
+          lastContactDate: r.last_contact_date,
+          lastTransactionDate: r.last_transaction_date,
+          riskProfile: r.risk_profile,
+          alertCount: r.alert_count,
+          profileStatus: r.profile_status,
+          incompleteSections: r.incomplete_sections,
+          investmentHorizon: r.investment_horizon,
+          netWorth: r.net_worth,
+        });
+
+        return {
+          ...base,
+          churnScore: insights.churnScore,
+          upsellScore: insights.upsellScore,
+          attentionReasons: insights.attentionReasons,
+        };
+      });
       res.json(mapped);
     } catch (error) {
       console.error("Get clients error:", error);
@@ -1199,6 +1486,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  app.post("/api/clients/:clientId/ai-drafts", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const clientId = Number(req.params.clientId);
+      if (Number.isNaN(clientId)) {
+        return res.status(400).json({ message: 'Invalid client id' });
+      }
+
+      const draftSchema = z.object({
+        type: z.enum(['email_follow_up', 'call_script']),
+        tone: z.enum(['formal', 'casual', 'confident', 'warm']).optional(),
+        focus: z.string().max(160).optional(),
+        additionalNotes: z.string().max(500).optional(),
+      });
+
+      const parsed = draftSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: 'Invalid request payload',
+          errors: parsed.error.flatten(),
+        });
+      }
+
+      const userId = req.session.userId;
+      const userRole = req.session.userRole;
+
+      let query = supabaseServer
+        .from('clients')
+        .select('id, full_name, tier, email, phone, aum_value, risk_profile, alert_count, profile_status, incomplete_sections, investment_horizon, net_worth, last_contact_date, last_transaction_date, assigned_to')
+        .eq('id', clientId)
+        .limit(1);
+
+      if (userRole !== 'admin' && userRole !== 'supervisor') {
+        query = query.eq('assigned_to', userId);
+      }
+
+      const { data, error } = await query.maybeSingle();
+
+      if (error) {
+        console.error('[POST /api/clients/:clientId/ai-drafts] Supabase error:', error);
+        return res.status(500).json({ message: error.message });
+      }
+
+      if (!data) {
+        return res.status(404).json({ message: 'Client not found' });
+      }
+
+      const draft = generateClientDraft(
+        {
+          id: data.id,
+          fullName: data.full_name,
+          tier: data.tier,
+          email: data.email,
+          phone: data.phone,
+          aumValue: data.aum_value,
+          riskProfile: data.risk_profile,
+          alertCount: data.alert_count,
+          profileStatus: data.profile_status,
+          incompleteSections: data.incomplete_sections,
+          investmentHorizon: data.investment_horizon,
+          netWorth: data.net_worth,
+          lastContactDate: data.last_contact_date,
+          lastTransactionDate: data.last_transaction_date,
+        },
+        parsed.data as ClientDraftRequest
+      );
+
+      res.json(draft);
+    } catch (error) {
+      console.error('[POST /api/clients/:clientId/ai-drafts] Error generating draft:', error);
+      res.status(500).json({ message: 'Failed to generate draft content' });
+    }
+  });
+
   app.post("/api/clients", authMiddleware, addClient);
   
   // Drafts: save and load personal information drafts
@@ -1305,6 +1665,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Model orchestration endpoints
+  registerModelOrchestrationRoutes(app, authMiddleware);
+
   // Goals routes
   app.post("/api/goals", authMiddleware, goalRoutes.createGoal);
   app.get("/api/goals", goalRoutes.getGoals);
@@ -1739,21 +2102,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Task routes
   app.get("/api/tasks", authMiddleware, async (req, res) => {
     try {
-      const assignedTo = (req.session as any).userId;
-      const completed = req.query.completed === "true" ? true : 
-                      req.query.completed === "false" ? false : 
+      const sessionUserId = (req.session as any).userId;
+      const parsedUserId = typeof sessionUserId === "number"
+        ? sessionUserId
+        : Number(sessionUserId ?? NaN);
+      const hasValidUser = Number.isFinite(parsedUserId);
+      const completed = req.query.completed === "true" ? true :
+                      req.query.completed === "false" ? false :
                       undefined;
       const clientId = req.query.clientId ? Number(req.query.clientId) : undefined;
-      
+
       if (req.query.clientId && isNaN(clientId!)) {
         return res.status(400).json({ message: "Invalid client ID format" });
       }
-      
-      const tasks = await storage.getTasks(assignedTo, completed, clientId);
-      res.json(tasks);
+
+      const tasks = await storage.getTasks(hasValidUser ? parsedUserId : undefined, completed, clientId);
+      const enrichedTasks = await enrichTasksWithIntelligence(tasks as any[], {
+        userId: hasValidUser ? Number(parsedUserId) : 0,
+        storage,
+      });
+      res.json(enrichedTasks);
     } catch (error) {
       console.error("Get tasks error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/tasks/interpret", authMiddleware, async (req, res) => {
+    try {
+      const schema = z.object({
+        input: z.string().min(1, "Task description is required for interpretation"),
+      });
+      const parseResult = schema.safeParse(req.body);
+
+      if (!parseResult.success) {
+        return res.status(400).json({
+          message: "Invalid task interpretation input",
+          errors: parseResult.error.format(),
+        });
+      }
+
+      const sessionUserId = (req.session as any).userId;
+      const parsedUserId = typeof sessionUserId === "number"
+        ? sessionUserId
+        : Number(sessionUserId ?? NaN);
+
+      if (!Number.isFinite(parsedUserId)) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const result = await interpretTaskInput(parseResult.data.input, storage, parsedUserId);
+      res.json(result);
+    } catch (error) {
+      console.error("Interpret task input error:", error);
+      res.status(500).json({ message: "Failed to interpret task input" });
     }
   });
   
@@ -6687,6 +7089,10 @@ startxref
     getRebalancingSuggestions,
     getHoldings,
   } = await import('./services/portfolio-analysis-service');
+  const {
+    generatePortfolioAdvice,
+    runScenarioAnalysis,
+  } = await import('./services/portfolio-advice-service');
 
   // Get current portfolio allocation
   app.get('/api/portfolio/current-allocation', authMiddleware, async (req: Request, res: Response) => {
@@ -6828,7 +7234,7 @@ startxref
   app.get('/api/portfolio/holdings', authMiddleware, async (req: Request, res: Response) => {
     try {
       const clientId = parseInt(req.query.clientId as string);
-      const schemeId = req.query.schemeId 
+      const schemeId = req.query.schemeId
         ? parseInt(req.query.schemeId as string)
         : undefined;
 
@@ -6841,7 +7247,7 @@ startxref
       }
 
       const result = await getHoldings(clientId, schemeId);
-      
+
       if (!result.success) {
         return res.status(400).json(result);
       }
@@ -6852,6 +7258,78 @@ startxref
       res.status(500).json({
         success: false,
         message: 'Failed to fetch holdings',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  app.get('/api/portfolio/advice', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.query.clientId as string);
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const result = await generatePortfolioAdvice(clientId);
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get portfolio advice error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate portfolio advice',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  app.post('/api/portfolio/scenario', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { prompt, baseAllocation, clientId } = req.body || {};
+
+      if (!prompt || typeof prompt !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: 'Prompt is required',
+          errors: ['Prompt is required'],
+        });
+      }
+
+      if (!baseAllocation || typeof baseAllocation !== 'object') {
+        return res.status(400).json({
+          success: false,
+          message: 'Base allocation is required',
+          errors: ['Base allocation is required'],
+        });
+      }
+
+      const parsedClientId = typeof clientId === 'string' ? parseInt(clientId, 10) : clientId;
+      const scenarioResponse = runScenarioAnalysis({
+        clientId: typeof parsedClientId === 'number' && !isNaN(parsedClientId)
+          ? parsedClientId
+          : undefined,
+        prompt,
+        baseAllocation,
+      });
+
+      res.json({
+        success: true,
+        data: scenarioResponse,
+      });
+    } catch (error: any) {
+      console.error('Scenario analysis error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to analyse scenario',
         errors: [error.message || 'Unknown error'],
       });
     }

@@ -14,7 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Product, CartItem, TransactionType } from '../types/order.types';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertTriangle, Info } from 'lucide-react';
+import { AlertTriangle, Info, Loader2 } from 'lucide-react';
+import type { AllocationRecommendation } from '../context/order-integration-context';
 
 interface AddToCartDialogProps {
   product: Product | null;
@@ -22,6 +23,10 @@ interface AddToCartDialogProps {
   onOpenChange: (open: boolean) => void;
   onAddToCart: (item: CartItem) => void;
   existingHoldings?: { productId: number; schemeName: string }[]; // For switch source selection
+  onPreviewAllocation?: (
+    item: Pick<CartItem, 'productId' | 'schemeName' | 'transactionType' | 'amount'>,
+    product: Product
+  ) => Promise<AllocationRecommendation | null>;
 }
 
 export default function AddToCartDialog({
@@ -30,6 +35,7 @@ export default function AddToCartDialog({
   onOpenChange,
   onAddToCart,
   existingHoldings = [],
+  onPreviewAllocation,
 }: AddToCartDialogProps) {
   const [transactionType, setTransactionType] = useState<TransactionType>('Purchase');
   const [orderType, setOrderType] = useState<'Initial Purchase' | 'Additional Purchase'>('Initial Purchase');
@@ -38,6 +44,8 @@ export default function AddToCartDialog({
   const [sourceSchemeId, setSourceSchemeId] = useState<number | null>(null);
   const [isFullRedemption, setIsFullRedemption] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [recommendation, setRecommendation] = useState<AllocationRecommendation | null>(null);
+  const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
 
   // Reset form when product changes
   useEffect(() => {
@@ -49,7 +57,8 @@ export default function AddToCartDialog({
       setSourceSchemeId(null);
       setIsFullRedemption(false);
       setErrors({});
-      
+      setRecommendation(null);
+
       // Check if client has existing holdings for this product
       const hasHoldings = existingHoldings.some(h => h.productId === product.id);
       if (hasHoldings) {
@@ -65,6 +74,54 @@ export default function AddToCartDialog({
       setUnits(calculatedUnits);
     }
   }, [amount, product?.nav, transactionType]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const fetchRecommendation = async () => {
+      if (!product || !onPreviewAllocation || !open) {
+        setRecommendation(null);
+        setIsRecommendationLoading(false);
+        return;
+      }
+
+      if (amount <= 0) {
+        setRecommendation(null);
+        setIsRecommendationLoading(false);
+        return;
+      }
+
+      setIsRecommendationLoading(true);
+      try {
+        const result = await onPreviewAllocation(
+          {
+            productId: product.id,
+            schemeName: product.schemeName,
+            transactionType,
+            amount,
+          },
+          product
+        );
+        if (!isCancelled) {
+          setRecommendation(result);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Failed to load allocation recommendation:', error);
+          setRecommendation(null);
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsRecommendationLoading(false);
+        }
+      }
+    };
+
+    fetchRecommendation();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [amount, product, onPreviewAllocation, transactionType, open]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -163,6 +220,45 @@ export default function AddToCartDialog({
         </DialogHeader>
 
         <div className="space-y-4 sm:space-y-6 mt-4">
+          {recommendation && (
+            <Alert variant="default" className="border-primary/40 bg-primary/5">
+              <Info className="h-4 w-4" aria-hidden="true" />
+              <AlertDescription className="mt-2 space-y-1 text-xs sm:text-sm">
+                <p className="font-semibold">AI Portfolio Recommendation</p>
+                <p>{recommendation.explanation}</p>
+                <p>
+                  Suggested amount:{' '}
+                  <button
+                    type="button"
+                    className="underline font-semibold"
+                    onClick={() => setAmount(recommendation.recommendedAmount)}
+                  >
+                    ₹{recommendation.recommendedAmount.toLocaleString('en-IN')}
+                  </button>
+                  {recommendation.originalAmount !== recommendation.recommendedAmount && (
+                    <span className="ml-1 text-muted-foreground">
+                      (current ₹{recommendation.originalAmount.toLocaleString('en-IN')})
+                    </span>
+                  )}
+                </p>
+                {recommendation.policyHighlights.length > 0 && (
+                  <ul className="list-disc list-inside text-muted-foreground">
+                    {recommendation.policyHighlights.map((highlight, index) => (
+                      <li key={index}>{highlight}</li>
+                    ))}
+                  </ul>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+          {isRecommendationLoading && (
+            <Alert className="border-muted-foreground/40 bg-muted/10">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              <AlertDescription className="text-xs sm:text-sm">
+                Calculating portfolio impact preview...
+              </AlertDescription>
+            </Alert>
+          )}
           {/* Transaction Type Selection */}
           <div className="space-y-3">
             <Label className="text-sm sm:text-base font-semibold">

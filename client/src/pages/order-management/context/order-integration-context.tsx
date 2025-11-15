@@ -8,6 +8,16 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { CartItem, Product } from '../types/order.types';
 
+const resolveApiUrl = (path: string): string => {
+  if (/^https?:/i.test(path)) {
+    return path;
+  }
+  const origin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : 'http://localhost';
+  return new URL(path, origin).toString();
+};
+
 export interface PortfolioData {
   currentAllocation: Record<string, number>;
   holdings: Array<{
@@ -20,7 +30,16 @@ export interface PortfolioData {
   impactPreview?: {
     newAllocation: Record<string, number>;
     changes: Array<{ category: string; change: number }>;
+    recommendation?: AllocationRecommendation;
   };
+}
+
+export interface AllocationRecommendation {
+  recommendedAmount: number;
+  explanation: string;
+  policyHighlights: string[];
+  originalAmount: number;
+  productId: number;
 }
 
 export interface SIPPlan {
@@ -87,11 +106,15 @@ interface OrderIntegrationActions {
   removeFromCart: (itemId: string) => void;
   updateCartItem: (itemId: string, updates: Partial<CartItem>) => void;
   clearCart: () => void;
-  
+
   // Portfolio actions
   setPortfolioData: (data: PortfolioData | null) => void;
   togglePortfolioSidebar: () => void;
   calculateImpactPreview: (items: CartItem[]) => Promise<void>;
+  previewOptimizedAllocation: (
+    item: Pick<CartItem, 'productId' | 'schemeName' | 'transactionType' | 'amount'> & { id?: string },
+    product: Product
+  ) => Promise<AllocationRecommendation | null>;
   
   // SIP actions
   setActiveSIPPlans: (plans: SIPPlan[]) => void;
@@ -165,26 +188,105 @@ export function OrderIntegrationProvider({ children }: { children: ReactNode }) 
 
   const calculateImpactPreview = useCallback(async (items: CartItem[]) => {
     try {
-      // Call portfolio impact preview API
-      const response = await fetch('/api/portfolio/impact-preview', {
+      const response = await fetch(resolveApiUrl('/api/portfolio/impact-preview'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cartItems: items }),
       });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (portfolioData) {
-          setPortfolioData({
-            ...portfolioData,
-            impactPreview: data.impactPreview,
-          });
-        }
+
+      if (!response.ok) {
+        return;
       }
+
+      const data = await response.json();
+      setPortfolioData((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          impactPreview: data.impactPreview,
+        };
+      });
     } catch (error) {
       console.error('Failed to calculate impact preview:', error);
     }
-  }, [portfolioData]);
+  }, []);
+
+  const previewOptimizedAllocation = useCallback<
+    OrderIntegrationActions['previewOptimizedAllocation']
+  >(
+    async (item, product) => {
+      const payload = {
+        cartItems: [
+          ...cartItems,
+          {
+            id: item.id ?? `preview-${product.id}`,
+            productId: item.productId,
+            schemeName: item.schemeName,
+            transactionType: item.transactionType,
+            amount: item.amount,
+          },
+        ],
+        optimize: true,
+        portfolioSnapshot: portfolioData,
+      };
+
+      try {
+        const response = await fetch(resolveApiUrl('/api/portfolio/impact-preview'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const recommendation: AllocationRecommendation | null =
+            data?.impactPreview?.recommendation ?? null;
+
+          if (recommendation) {
+            return recommendation;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch allocation recommendation:', error);
+      }
+
+      // Fallback recommendation based on portfolio tilt
+      const currentShare = portfolioData?.currentAllocation[product.category] ?? 0;
+      const desiredShare = 50;
+      const remainingCapacity = Math.max(desiredShare - currentShare, 0);
+      const scaledAmount =
+        remainingCapacity > 0
+          ? Math.max(
+              product.minInvestment,
+              Math.round((item.amount * remainingCapacity) / (currentShare || 10))
+            )
+          : Math.max(product.minInvestment, Math.round(item.amount * 0.75));
+
+      const fallback: AllocationRecommendation = {
+        recommendedAmount: product.maxInvestment
+          ? Math.min(product.maxInvestment, scaledAmount)
+          : scaledAmount,
+        explanation:
+          remainingCapacity > 0
+            ? `Keeping ${product.category} exposure near ${desiredShare}% improves balance by closing a ${remainingCapacity.toFixed(
+                1
+              )}% gap.`
+            : `${product.category} exposure is already heavy. Scaling back limits drift beyond policy guardrails.`,
+        policyHighlights:
+          remainingCapacity > 0
+            ? [`Category gap of ${remainingCapacity.toFixed(1)}% identified.`]
+            : ['Category overweight detected. Suggested to moderate allocation.'],
+        originalAmount: item.amount,
+        productId: product.id,
+      };
+
+      return fallback;
+    },
+    [cartItems, portfolioData]
+  );
 
   // SIP actions
   const openSIPDialog = useCallback(() => {
@@ -266,6 +368,7 @@ export function OrderIntegrationProvider({ children }: { children: ReactNode }) 
     setPortfolioData,
     togglePortfolioSidebar,
     calculateImpactPreview,
+    previewOptimizedAllocation,
     setActiveSIPPlans,
     openSIPDialog,
     closeSIPDialog,
