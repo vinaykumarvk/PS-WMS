@@ -3,6 +3,33 @@
  * Type definitions for analytics data
  */
 
+export type BenchmarkValueFormat = 'number' | 'currency' | 'percent';
+
+export interface AnalyticsNarrative {
+  headline: string;
+  summary: string;
+  supportingPoints: string[];
+}
+
+export interface BenchmarkInsight {
+  metric: string;
+  currentValue: number;
+  benchmarkValue: number;
+  variance: number;
+  direction: 'above' | 'below' | 'on_track';
+  format: BenchmarkValueFormat;
+  narrative?: string;
+}
+
+export interface ActionRecommendation {
+  id: string;
+  title: string;
+  description: string;
+  confidence: number;
+  category: 'efficiency' | 'retention' | 'revenue' | 'compliance';
+  evidence: string[];
+}
+
 export interface OrderAnalytics {
   totalOrders: number;
   totalValue: number;
@@ -14,6 +41,8 @@ export interface OrderAnalytics {
   ordersOverTime: Array<{ date: string; count: number; value: number }>;
   topClients: Array<{ clientId: number; clientName: string; orderCount: number; totalValue: number }>;
   topProducts: Array<{ productId: number; productName: string; orderCount: number; totalValue: number }>;
+  narrative?: AnalyticsNarrative;
+  benchmarks?: BenchmarkInsight[];
 }
 
 export interface PerformanceMetrics {
@@ -38,6 +67,8 @@ export interface PerformanceMetrics {
     orders: number;
     revenue: number;
   }>;
+  narrative?: AnalyticsNarrative;
+  benchmarks?: BenchmarkInsight[];
 }
 
 export interface ClientInsights {
@@ -60,5 +91,7 @@ export interface ClientInsights {
     byAUM: Array<{ range: string; count: number }>;
     byActivity: Array<{ activity: string; count: number }>;
   };
+  narrative?: AnalyticsNarrative;
+  benchmarks?: BenchmarkInsight[];
 }
 

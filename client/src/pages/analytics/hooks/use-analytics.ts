@@ -5,6 +5,11 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { OrderAnalytics, PerformanceMetrics, ClientInsights } from '../types/analytics.types';
+import {
+  enrichClientInsights,
+  enrichOrderAnalytics,
+  enrichPerformanceMetrics,
+} from '../utils/insight-generators';
 
 export interface AnalyticsFilters {
   startDate?: string;
@@ -34,7 +39,8 @@ export function useOrderAnalytics(filters?: AnalyticsFilters) {
       if (!response.ok) {
         throw new Error('Failed to fetch order analytics');
       }
-      return response.json();
+      const payload = (await response.json()) as OrderAnalytics;
+      return enrichOrderAnalytics(payload);
     },
   });
 }
@@ -58,7 +64,8 @@ export function usePerformanceMetrics(filters?: AnalyticsFilters) {
       if (!response.ok) {
         throw new Error('Failed to fetch performance metrics');
       }
-      return response.json();
+      const payload = (await response.json()) as PerformanceMetrics;
+      return enrichPerformanceMetrics(payload);
     },
   });
 }
@@ -82,7 +89,8 @@ export function useClientInsights(filters?: AnalyticsFilters) {
       if (!response.ok) {
         throw new Error('Failed to fetch client insights');
       }
-      return response.json();
+      const payload = (await response.json()) as ClientInsights;
+      return enrichClientInsights(payload);
     },
   });
 }
