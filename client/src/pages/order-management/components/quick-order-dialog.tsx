@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Textarea } from '@/components/ui/textarea';
 import FavoritesList from './quick-order/favorites-list';
 import RecentOrders from './quick-order/recent-orders';
 import AmountPresets from './quick-order/amount-presets';
@@ -33,6 +34,8 @@ import { CartItem } from '../types/order.types';
 import { useQuery } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import { Product } from '../types/order.types';
+import { toast } from '@/hooks/use-toast';
+import { useOrderIntegration } from '../context/order-integration-context';
 
 interface QuickOrderDialogProps {
   open: boolean;
@@ -45,12 +48,16 @@ export default function QuickOrderDialog({
   onOpenChange,
   onAddToCart,
 }: QuickOrderDialogProps) {
+  const { state, actions } = useOrderIntegration();
   const [selectedAmount, setSelectedAmount] = useState<number | undefined>();
   const [customAmount, setCustomAmount] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'favorites' | 'recent'>('favorites');
   const [selectedFavorite, setSelectedFavorite] = useState<Favorite | null>(null);
   const [selectedRecentOrder, setSelectedRecentOrder] = useState<RecentOrder | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  const [nlCommand, setNlCommand] = useState('');
+  const [nlProcessing, setNlProcessing] = useState(false);
+  const [nlError, setNlError] = useState<string | null>(null);
 
   // Fetch data
   const { data: favorites = [], isLoading: favoritesLoading } = useFavorites();
@@ -77,6 +84,9 @@ export default function QuickOrderDialog({
       setSelectedFavorite(null);
       setSelectedRecentOrder(null);
       setErrors([]);
+      setNlCommand('');
+      setNlError(null);
+      setNlProcessing(false);
     }
   }, [open]);
 
@@ -112,6 +122,166 @@ export default function QuickOrderDialog({
     }
 
     return validationErrors;
+  };
+
+  const computeMatchScore = (haystack: string, command: string): number => {
+    const normalizedHaystack = haystack.toLowerCase();
+    const normalizedCommand = command.toLowerCase();
+    let score = 0;
+    if (normalizedCommand.includes(normalizedHaystack)) {
+      score += normalizedHaystack.length * 2;
+    }
+    const words = normalizedHaystack.split(/\s+/).filter(word => word.length > 2);
+    words.forEach(word => {
+      if (normalizedCommand.includes(word)) {
+        score += word.length;
+      }
+    });
+    return score;
+  };
+
+  const findMatchingProduct = (command: string): Product | undefined => {
+    let best: { product: Product; score: number } | undefined;
+    products.forEach(product => {
+      const score = computeMatchScore(product.schemeName, command);
+      if (score > (best?.score ?? 0)) {
+        best = { product, score };
+      }
+    });
+    return best?.score ? best.product : undefined;
+  };
+
+  const findMatchingCartItem = (command: string): CartItem | undefined => {
+    let best: { item: CartItem; score: number } | undefined;
+    state.cartItems.forEach(item => {
+      const score = computeMatchScore(item.schemeName, command);
+      if (score > (best?.score ?? 0)) {
+        best = { item, score };
+      }
+    });
+    return best?.score ? best.item : undefined;
+  };
+
+  type ParsedCommand =
+    | { action: 'add'; amount: number; product: Product }
+    | { action: 'update'; amount: number; product?: Product; cartItem: CartItem }
+    | { action: 'remove'; cartItem: CartItem; product?: Product };
+
+  const parseNaturalLanguageCommand = (command: string): ParsedCommand | { error: string } => {
+    const trimmed = command.trim();
+    if (!trimmed) {
+      return { error: 'Enter a command such as "Add 5000 to Axis Bluechip".' };
+    }
+
+    const lower = trimmed.toLowerCase();
+    let action: ParsedCommand['action'] = 'add';
+    if (/(remove|delete|drop|clear)/.test(lower)) {
+      action = 'remove';
+    } else if (/(update|change|set|adjust|increase|decrease|reduce)/.test(lower)) {
+      action = 'update';
+    }
+
+    const amountMatch = lower.match(/(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/);
+    const amount = amountMatch ? Number(amountMatch[1].replace(/,/g, '')) : undefined;
+
+    const matchedCartItem = findMatchingCartItem(lower);
+    const matchedProduct = findMatchingProduct(lower) || (matchedCartItem ? products.find(p => p.id === matchedCartItem.productId) : undefined);
+
+    if (action === 'add') {
+      if (!matchedProduct) {
+        return { error: 'Unable to find a matching product in the catalog.' };
+      }
+      if (!amount || Number.isNaN(amount) || amount <= 0) {
+        return { error: 'Please include a valid amount in your command.' };
+      }
+      return { action: 'add', amount, product: matchedProduct };
+    }
+
+    if (!matchedCartItem) {
+      return { error: 'No matching cart item found for the requested action.' };
+    }
+
+    if (action === 'update') {
+      if (!amount || Number.isNaN(amount) || amount <= 0) {
+        return { error: 'Specify the target amount to update the cart item.' };
+      }
+      return { action: 'update', amount, cartItem: matchedCartItem, product: matchedProduct };
+    }
+
+    return { action: 'remove', cartItem: matchedCartItem, product: matchedProduct };
+  };
+
+  const handleNaturalLanguageSubmit = async () => {
+    if (!nlCommand.trim()) {
+      setNlError('Enter a command to interpret.');
+      return;
+    }
+
+    setNlProcessing(true);
+    setNlError(null);
+    try {
+      const parsed = parseNaturalLanguageCommand(nlCommand);
+      if ('error' in parsed) {
+        setNlError(parsed.error);
+        return;
+      }
+
+      if (parsed.action === 'add') {
+        const validationErrors = validateAmount(parsed.amount, parsed.product);
+        if (validationErrors.length > 0) {
+          setErrors(validationErrors);
+          return;
+        }
+
+        const newItem: CartItem = {
+          id: `${parsed.product.id}-${Date.now()}`,
+          productId: parsed.product.id,
+          schemeName: parsed.product.schemeName,
+          transactionType: 'Purchase',
+          amount: parsed.amount,
+          nav: parsed.product.nav,
+        };
+
+        onAddToCart(newItem);
+        toast({
+          title: 'Item added to cart',
+          description: `Added ₹${parsed.amount.toLocaleString('en-IN')} in ${parsed.product.schemeName}.`,
+        });
+        setNlCommand('');
+        setErrors([]);
+      } else if (parsed.action === 'update') {
+        const product = parsed.product || products.find(p => p.id === parsed.cartItem.productId);
+        const validationErrors = validateAmount(parsed.amount, product);
+        if (validationErrors.length > 0) {
+          setErrors(validationErrors);
+          return;
+        }
+
+        const updatedItems = state.cartItems.map(item =>
+          item.id === parsed.cartItem.id ? { ...item, amount: parsed.amount } : item
+        );
+        actions.updateCartItem(parsed.cartItem.id, { amount: parsed.amount });
+        await actions.calculateImpactPreview(updatedItems);
+        toast({
+          title: 'Cart updated',
+          description: `${parsed.cartItem.schemeName} set to ₹${parsed.amount.toLocaleString('en-IN')}.`,
+        });
+        setNlCommand('');
+        setErrors([]);
+      } else {
+        const remainingItems = state.cartItems.filter(item => item.id !== parsed.cartItem.id);
+        actions.removeFromCart(parsed.cartItem.id);
+        await actions.calculateImpactPreview(remainingItems);
+        toast({
+          title: 'Item removed',
+          description: `${parsed.cartItem.schemeName} removed from cart.`,
+        });
+        setNlCommand('');
+        setErrors([]);
+      }
+    } finally {
+      setNlProcessing(false);
+    }
   };
 
   // Handle quick invest from favorites
@@ -199,6 +369,43 @@ export default function QuickOrderDialog({
         </DialogHeader>
 
         <div className="space-y-6 mt-4">
+          {/* Natural Language Command */}
+          <div className="space-y-2">
+            <Label htmlFor="nl-command" className="text-base font-semibold">
+              Natural Language Command
+            </Label>
+            <Textarea
+              id="nl-command"
+              placeholder="e.g. Add 5000 to Axis Bluechip or remove HDFC Balanced"
+              value={nlCommand}
+              onChange={(event) => setNlCommand(event.target.value)}
+              disabled={nlProcessing}
+              className="min-h-[80px]"
+            />
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              {nlError && <p className="text-xs text-destructive">{nlError}</p>}
+              <div className="flex items-center gap-2 justify-end">
+                <Button
+                  onClick={handleNaturalLanguageSubmit}
+                  disabled={nlProcessing || !nlCommand.trim()}
+                  variant="outline"
+                >
+                  {nlProcessing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                      Interpreting...
+                    </>
+                  ) : (
+                    'Interpret & Apply'
+                  )}
+                </Button>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Try commands like "Invest 10,000 in Balanced Advantage" or "Remove Axis Bluechip".
+            </p>
+          </div>
+
           {/* Amount Selection */}
           <div className="space-y-4">
             <div className="space-y-2">
