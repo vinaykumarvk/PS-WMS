@@ -1941,20 +1941,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/portfolio-alerts/:id", authMiddleware, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      
+
       if (isNaN(id)) {
         return res.status(400).json({ message: "Invalid alert ID" });
       }
-      
+
       const alert = await storage.getPortfolioAlert(id);
-      
+
       if (!alert) {
         return res.status(404).json({ message: "Alert not found" });
       }
-      
+
       res.json(alert);
     } catch (error) {
       console.error("Get portfolio alert error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/portfolio/deltas", authMiddleware, async (req, res) => {
+    try {
+      const userId = (req.session as AuthenticatedSession).userId;
+      const deltas = await storage.getPortfolioDeltas(userId);
+      res.json(deltas);
+    } catch (error) {
+      console.error("Get portfolio deltas error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });

@@ -19,6 +19,7 @@ import {
 import { eq, and, gte, lt, lte, desc, sql, or } from "drizzle-orm";
 import { db } from "./db";
 import { supabaseServer } from "./lib/supabase";
+import { PortfolioDelta } from "@shared/types";
 
 // modify the interface with any CRUD methods
 // you might need
@@ -67,6 +68,11 @@ export interface IStorage {
   updatePortfolioAlert(id: number, alert: Partial<InsertPortfolioAlert>): Promise<PortfolioAlert | undefined>;
   deletePortfolioAlert(id: number): Promise<boolean>;
 
+  // Portfolio Deltas methods
+  getPortfolioDeltas(assignedTo?: number): Promise<PortfolioDelta[]>;
+  createPortfolioDelta(delta: Omit<PortfolioDelta, "id" | "lastUpdated"> & { lastUpdated?: string }): Promise<PortfolioDelta>;
+  updatePortfolioDelta(id: number, delta: Partial<PortfolioDelta>): Promise<PortfolioDelta | undefined>;
+
   // Performance Metric methods
   getPerformanceMetrics(userId: number): Promise<PerformanceMetric[]>;
   createPerformanceMetric(metric: InsertPerformanceMetric): Promise<PerformanceMetric>;
@@ -99,17 +105,19 @@ export class MemStorage implements IStorage {
   private tasks: Map<number, Task>;
   private appointments: Map<number, Appointment>;
   private portfolioAlerts: Map<number, PortfolioAlert>;
+  private portfolioDeltas: Map<number, PortfolioDelta>;
   private performanceMetrics: Map<number, PerformanceMetric>;
   private aumTrends: Map<number, AumTrend>;
   private salesPipeline: Map<number, SalesPipeline>;
   private transactions: Map<number, Transaction>;
-  
+
   userCurrentId: number;
   clientCurrentId: number;
   prospectCurrentId: number;
   taskCurrentId: number;
   appointmentCurrentId: number;
   portfolioAlertCurrentId: number;
+  portfolioDeltaCurrentId: number;
   performanceMetricCurrentId: number;
   aumTrendCurrentId: number;
   salesPipelineCurrentId: number;
@@ -122,17 +130,19 @@ export class MemStorage implements IStorage {
     this.tasks = new Map();
     this.appointments = new Map();
     this.portfolioAlerts = new Map();
+    this.portfolioDeltas = new Map();
     this.performanceMetrics = new Map();
     this.aumTrends = new Map();
     this.salesPipeline = new Map();
     this.transactions = new Map();
-    
+
     this.userCurrentId = 1;
     this.clientCurrentId = 1;
     this.prospectCurrentId = 1;
     this.taskCurrentId = 1;
     this.appointmentCurrentId = 1;
     this.portfolioAlertCurrentId = 1;
+    this.portfolioDeltaCurrentId = 1;
     this.performanceMetricCurrentId = 1;
     this.aumTrendCurrentId = 1;
     this.salesPipelineCurrentId = 1;
@@ -310,6 +320,40 @@ export class MemStorage implements IStorage {
       severity: "info",
       read: false,
       actionRequired: true
+    });
+
+    // Seed portfolio deltas
+    this.createPortfolioDelta({
+      clientName: "Anand Patel",
+      deltaType: "allocation-drift",
+      deltaValue: 6.2,
+      direction: "up",
+      impact: "critical",
+      summary: "Equity allocation has drifted 6.2% above the strategic target in the last 5 days.",
+      timeframe: "5d",
+      assignedTo: 1
+    });
+
+    this.createPortfolioDelta({
+      clientName: "Sonia Mehta",
+      deltaType: "cash-drift",
+      deltaValue: 4.5,
+      direction: "down",
+      impact: "high",
+      summary: "Cash buffer fell below policy minimum after recent disbursement.",
+      timeframe: "24h",
+      assignedTo: 1
+    });
+
+    this.createPortfolioDelta({
+      clientName: "Rahul Joshi",
+      deltaType: "performance",
+      deltaValue: 3.1,
+      direction: "down",
+      impact: "moderate",
+      summary: "Portfolio underperformed benchmark by 3.1% over the last month.",
+      timeframe: "30d",
+      assignedTo: 1
     });
     
     // Seed performance metrics
@@ -712,6 +756,46 @@ export class MemStorage implements IStorage {
   
   async deletePortfolioAlert(id: number): Promise<boolean> {
     return this.portfolioAlerts.delete(id);
+  }
+
+  // Portfolio Delta methods
+  async getPortfolioDeltas(assignedTo?: number): Promise<PortfolioDelta[]> {
+    let deltas = Array.from(this.portfolioDeltas.values());
+
+    if (assignedTo) {
+      deltas = deltas.filter(delta => delta.assignedTo === assignedTo);
+    }
+
+    return deltas.sort((a, b) => new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime());
+  }
+
+  async createPortfolioDelta(
+    insertDelta: Omit<PortfolioDelta, "id" | "lastUpdated"> & { lastUpdated?: string }
+  ): Promise<PortfolioDelta> {
+    const id = this.portfolioDeltaCurrentId++;
+    const delta: PortfolioDelta = {
+      ...insertDelta,
+      id,
+      lastUpdated: insertDelta.lastUpdated ?? new Date().toISOString()
+    };
+    this.portfolioDeltas.set(id, delta);
+    return delta;
+  }
+
+  async updatePortfolioDelta(id: number, deltaUpdate: Partial<PortfolioDelta>): Promise<PortfolioDelta | undefined> {
+    const delta = this.portfolioDeltas.get(id);
+
+    if (!delta) {
+      return undefined;
+    }
+
+    const updatedDelta: PortfolioDelta = {
+      ...delta,
+      ...deltaUpdate,
+      lastUpdated: deltaUpdate.lastUpdated ?? new Date().toISOString()
+    };
+    this.portfolioDeltas.set(id, updatedDelta);
+    return updatedDelta;
   }
 
   // Performance Metric methods
