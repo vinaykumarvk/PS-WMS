@@ -18,6 +18,8 @@ import { OrderAnalyticsComponent } from './analytics/components/order-analytics'
 import { PerformanceMetricsComponent } from './analytics/components/performance-metrics';
 import { ClientInsightsComponent } from './analytics/components/client-insights';
 import { ExportOptionsComponent } from './analytics/components/export-options';
+import { AnalyticsRecommendations } from './analytics/components/action-recommendations';
+import { deriveKpiRecommendations } from './analytics/utils/insight-generators';
 
 interface AgentMessage {
   role: 'user' | 'assistant';
@@ -37,6 +39,7 @@ export default function AnalyticsDashboard() {
       content: 'Hi! I can dig into your analytics. Ask about AUM, revenue, conversion, or top clients to get tailored insights.'
     }
   ]);
+  const [activeTab, setActiveTab] = useState<'orders' | 'performance' | 'clients'>('orders');
 
   const { data: orderAnalytics, isLoading: ordersLoading } = useOrderAnalytics(filters);
   const { data: performanceMetrics, isLoading: performanceLoading } = usePerformanceMetrics(filters);
@@ -85,6 +88,16 @@ export default function AnalyticsDashboard() {
   };
 
   const isLoading = ordersLoading || performanceLoading || clientsLoading;
+
+  const recommendations = useMemo(
+    () =>
+      deriveKpiRecommendations({
+        orderAnalytics,
+        performanceMetrics,
+        clientInsights,
+      }),
+    [orderAnalytics, performanceMetrics, clientInsights],
+  );
 
   const generateAgentResponse = (question: string) => {
     const lower = question.toLowerCase();
@@ -257,10 +270,12 @@ export default function AnalyticsDashboard() {
                 Reset Filters
               </Button>
             </div>
-          </CardContent>
-        </Card>
+        </CardContent>
+      </Card>
 
-        <Card className="mb-6 animate-in slide-in-from-bottom-4 duration-700 delay-250">
+      <AnalyticsRecommendations recommendations={recommendations} isLoading={isLoading} />
+
+      <Card className="mb-6 animate-in slide-in-from-bottom-4 duration-700 delay-250">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <MessageSquare className="h-5 w-5" />
@@ -282,7 +297,11 @@ export default function AnalyticsDashboard() {
         </Card>
 
         {/* Analytics Tabs */}
-        <Tabs defaultValue="orders" className="space-y-6 animate-in slide-in-from-bottom-4 duration-700 delay-300">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as 'orders' | 'performance' | 'clients')}
+          className="space-y-6 animate-in slide-in-from-bottom-4 duration-700 delay-300"
+        >
           <TabsList className="bg-muted/50 border border-border/50 rounded-xl p-1 h-auto shadow-sm hover:shadow-md transition-all duration-300">
             <TabsTrigger
               value="orders"
