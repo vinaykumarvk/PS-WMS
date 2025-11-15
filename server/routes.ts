@@ -5,6 +5,8 @@ import { pool } from "./db";
 import { db } from "./db";
 import { eq, sql, and, gt, desc, or, inArray } from "drizzle-orm";
 import { clients, prospects, transactions, performanceIncentives, clientComplaints, products } from "@shared/schema";
+import { calculateClientInsights, semanticSearchClients, generateClientDraft } from "./services/client-ai-service";
+import type { ClientDraftRequest } from "@shared/types/insights";
 import communicationsRouter from "./communications";
 import portfolioReportRouter from "./portfolio-report";
 import suggestionsRouter from "./routes/suggestions";
@@ -563,6 +565,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/clients/search/semantic', async (req: Request, res: Response) => {
+    try {
+      if (!(req.session as any).userId) {
+        (req.session as any).userId = 1;
+        (req.session as any).userRole = 'admin';
+      }
+
+      const query = (req.query.q as string | undefined)?.trim() ?? '';
+      if (query.length < 3) {
+        return res.json([]);
+      }
+
+      const userId = (req.session as any).userId;
+      const userRole = (req.session as any).userRole;
+
+      const baseQuery = supabaseServer
+        .from('clients')
+        .select('id, full_name, tier, email, phone, aum_value, risk_profile, alert_count, profile_status, incomplete_sections, investment_horizon, net_worth, last_contact_date, last_transaction_date');
+
+      const { data, error } = (userRole === 'admin' || userRole === 'supervisor')
+        ? await baseQuery
+        : await baseQuery.eq('assigned_to', userId);
+
+      if (error) {
+        return res.status(500).json({ message: error.message });
+      }
+
+      const clientsForSearch = (data || []).map((row: any) => ({
+        id: row.id,
+        fullName: row.full_name,
+        tier: row.tier,
+        email: row.email,
+        phone: row.phone,
+        aumValue: row.aum_value,
+        riskProfile: row.risk_profile,
+        alertCount: row.alert_count,
+        profileStatus: row.profile_status,
+        incompleteSections: row.incomplete_sections,
+        investmentHorizon: row.investment_horizon,
+        netWorth: row.net_worth,
+        lastContactDate: row.last_contact_date,
+        lastTransactionDate: row.last_transaction_date,
+      }));
+
+      const results = semanticSearchClients(query, clientsForSearch);
+      res.json(results);
+    } catch (error) {
+      console.error('Semantic client search error:', error);
+      res.status(500).json({ message: 'Failed to run semantic search' });
+    }
+  });
+
   // Test endpoint to verify routing works
   app.get('/api/test-products', (req: Request, res: Response) => {
     console.log('TEST ENDPOINT HIT!');
@@ -779,27 +833,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? await baseQuery
         : await baseQuery.eq('assigned_to', userId);
       if (error) return res.status(500).json({ message: error.message });
-      const mapped = (data || []).map((r: any) => ({
-        id: r.id,
-        fullName: r.full_name,
-        initials: r.initials,
-        tier: r.tier,
-        aum: r.aum,
-        aumValue: r.aum_value,
-        email: r.email,
-        phone: r.phone,
-        lastContactDate: r.last_contact_date,
-        lastTransactionDate: r.last_transaction_date,
-        riskProfile: r.risk_profile,
-        yearlyPerformance: r.yearly_performance,
-        alertCount: r.alert_count,
-        createdAt: r.created_at,
-        assignedTo: r.assigned_to,
-        profileStatus: r.profile_status,
-        incompleteSections: r.incomplete_sections,
-        investmentHorizon: r.investment_horizon,
-        netWorth: r.net_worth
-      }));
+      const mapped = (data || []).map((r: any) => {
+        const base = {
+          id: r.id,
+          fullName: r.full_name,
+          initials: r.initials,
+          tier: r.tier,
+          aum: r.aum,
+          aumValue: r.aum_value,
+          email: r.email,
+          phone: r.phone,
+          lastContactDate: r.last_contact_date,
+          lastTransactionDate: r.last_transaction_date,
+          riskProfile: r.risk_profile,
+          yearlyPerformance: r.yearly_performance,
+          alertCount: r.alert_count,
+          createdAt: r.created_at,
+          assignedTo: r.assigned_to,
+          profileStatus: r.profile_status,
+          incompleteSections: r.incomplete_sections,
+          investmentHorizon: r.investment_horizon,
+          netWorth: r.net_worth
+        };
+
+        const insights = calculateClientInsights({
+          id: r.id,
+          fullName: r.full_name,
+          tier: r.tier,
+          aumValue: r.aum_value,
+          email: r.email,
+          phone: r.phone,
+          lastContactDate: r.last_contact_date,
+          lastTransactionDate: r.last_transaction_date,
+          riskProfile: r.risk_profile,
+          alertCount: r.alert_count,
+          profileStatus: r.profile_status,
+          incompleteSections: r.incomplete_sections,
+          investmentHorizon: r.investment_horizon,
+          netWorth: r.net_worth,
+        });
+
+        return {
+          ...base,
+          churnScore: insights.churnScore,
+          upsellScore: insights.upsellScore,
+          attentionReasons: insights.attentionReasons,
+        };
+      });
       res.json(mapped);
     } catch (error) {
       console.error("Get clients error:", error);
@@ -1040,6 +1120,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  app.post("/api/clients/:clientId/ai-drafts", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const clientId = Number(req.params.clientId);
+      if (Number.isNaN(clientId)) {
+        return res.status(400).json({ message: 'Invalid client id' });
+      }
+
+      const draftSchema = z.object({
+        type: z.enum(['email_follow_up', 'call_script']),
+        tone: z.enum(['formal', 'casual', 'confident', 'warm']).optional(),
+        focus: z.string().max(160).optional(),
+        additionalNotes: z.string().max(500).optional(),
+      });
+
+      const parsed = draftSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: 'Invalid request payload',
+          errors: parsed.error.flatten(),
+        });
+      }
+
+      const userId = req.session.userId;
+      const userRole = req.session.userRole;
+
+      let query = supabaseServer
+        .from('clients')
+        .select('id, full_name, tier, email, phone, aum_value, risk_profile, alert_count, profile_status, incomplete_sections, investment_horizon, net_worth, last_contact_date, last_transaction_date, assigned_to')
+        .eq('id', clientId)
+        .limit(1);
+
+      if (userRole !== 'admin' && userRole !== 'supervisor') {
+        query = query.eq('assigned_to', userId);
+      }
+
+      const { data, error } = await query.maybeSingle();
+
+      if (error) {
+        console.error('[POST /api/clients/:clientId/ai-drafts] Supabase error:', error);
+        return res.status(500).json({ message: error.message });
+      }
+
+      if (!data) {
+        return res.status(404).json({ message: 'Client not found' });
+      }
+
+      const draft = generateClientDraft(
+        {
+          id: data.id,
+          fullName: data.full_name,
+          tier: data.tier,
+          email: data.email,
+          phone: data.phone,
+          aumValue: data.aum_value,
+          riskProfile: data.risk_profile,
+          alertCount: data.alert_count,
+          profileStatus: data.profile_status,
+          incompleteSections: data.incomplete_sections,
+          investmentHorizon: data.investment_horizon,
+          netWorth: data.net_worth,
+          lastContactDate: data.last_contact_date,
+          lastTransactionDate: data.last_transaction_date,
+        },
+        parsed.data as ClientDraftRequest
+      );
+
+      res.json(draft);
+    } catch (error) {
+      console.error('[POST /api/clients/:clientId/ai-drafts] Error generating draft:', error);
+      res.status(500).json({ message: 'Failed to generate draft content' });
+    }
+  });
+
   app.post("/api/clients", authMiddleware, addClient);
   
   // Drafts: save and load personal information drafts
