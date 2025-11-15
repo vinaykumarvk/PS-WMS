@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'wouter';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { ArrowLeft, MessageCircle, Phone, Mail, Video, FileText, Clock, Paperclip, Calendar, CheckCircle2, AlertCircle, Filter, BarChart4, Wallet, Target, User, ArrowUpDown, Users, CheckSquare, MessageSquare, Plus, Search, ChevronDown, ChevronUp, PieChart, Receipt, FileBarChart, Lightbulb } from 'lucide-react';
+import { ArrowLeft, MessageCircle, Phone, Mail, Video, FileText, Clock, Paperclip, Calendar, CheckCircle2, AlertCircle, Filter, BarChart4, Wallet, Target, User, ArrowUpDown, Users, CheckSquare, MessageSquare, Plus, Search, ChevronDown, ChevronUp, PieChart, Receipt, FileBarChart, Lightbulb, FileAudio2, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { transcribeInteractionAudio, summarizeInteractionTranscript } from '@/lib/model-orchestration';
 
 // Utility functions
 const getInitials = (name: string): string => {
@@ -207,14 +208,22 @@ const ClientCommunications: React.FC = () => {
     communication_type: 'advisory_meeting',
     channel: 'phone',
     direction: 'outbound',
+    duration_minutes: 30,
     subject: '',
     summary: '',
     notes: '',
     sentiment: 'positive',
     follow_up_required: false,
     next_steps: '',
-    tags: [] as string[]
+    tags: [] as string[],
+    audioTranscript: '',
+    audioSummary: '',
+    audioFileName: '',
+    audioDurationSeconds: undefined as number | undefined,
   });
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [audioProcessingState, setAudioProcessingState] = useState<'idle' | 'processing' | 'complete'>('idle');
+  const [audioError, setAudioError] = useState<string | null>(null);
   
   // Query client for cache invalidation
   const queryClient = useQueryClient();
@@ -310,9 +319,89 @@ const ClientCommunications: React.FC = () => {
     return filteredCommunications.slice(0, visibleCount);
   }, [filteredCommunications, visibleCount]);
 
+  const readFileAsBase64 = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const base64 = result.includes(',') ? result.split(',')[1] ?? '' : result;
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error('Failed to read audio file'));
+      reader.readAsDataURL(file);
+    });
+
+  const handleAudioUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setAudioError(null);
+    setAudioProcessingState('processing');
+
+    try {
+      const base64Audio = await readFileAsBase64(file);
+      const transcription = await transcribeInteractionAudio({
+        base64Audio,
+        fileName: file.name,
+        mimeType: file.type,
+        clientId: newNoteData.client_id,
+        context: newNoteData.subject || 'client-interaction',
+      });
+
+      const summarization = await summarizeInteractionTranscript({
+        transcript: transcription.transcript,
+        clientId: newNoteData.client_id,
+        subject: newNoteData.subject,
+      });
+
+      setNewNoteData(prev => ({
+        ...prev,
+        audioTranscript: transcription.transcript,
+        audioSummary: summarization.summary,
+        audioFileName: file.name,
+        audioDurationSeconds: transcription.durationSeconds,
+        summary: prev.summary && prev.summary.trim().length > 0 ? prev.summary : summarization.summary,
+        notes: prev.notes && prev.notes.trim().length > 0 ? prev.notes : transcription.transcript,
+        tags: Array.from(new Set([...(prev.tags || []), 'audio-transcript'])),
+      }));
+
+      setAudioProcessingState('complete');
+      toast({ title: 'Audio processed', description: 'Transcript and summary have been generated for this recording.' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to process audio recording.';
+      setAudioProcessingState('idle');
+      setAudioError(message);
+      toast({ title: 'Audio processing failed', description: message, variant: 'destructive' });
+    }
+  };
+
+  const clearAudioUpload = () => {
+    setNewNoteData(prev => ({
+      ...prev,
+      audioTranscript: '',
+      audioSummary: '',
+      audioFileName: '',
+      audioDurationSeconds: undefined,
+      tags: (prev.tags || []).filter(tag => tag !== 'audio-transcript'),
+    }));
+    setAudioProcessingState('idle');
+    setAudioError(null);
+    if (audioFileInputRef.current) {
+      audioFileInputRef.current.value = '';
+    }
+  };
+
   // Mutation for creating new note
   const createNoteMutation = useMutation({
     mutationFn: async (noteData: typeof newNoteData) => {
+      const summaryText = noteData.summary && noteData.summary.trim().length > 0
+        ? noteData.summary
+        : (noteData.audioSummary || noteData.summary);
+      const transcriptBlock = noteData.audioTranscript
+        ? `${noteData.notes && noteData.notes.trim().length > 0 ? '\n\n' : ''}Transcript (${noteData.audioFileName || 'Recording'}):\n${noteData.audioTranscript}`
+        : '';
+      const baseNotes = noteData.notes && noteData.notes.trim().length > 0 ? noteData.notes.trim() : '';
+      const combinedNotes = `${baseNotes}${transcriptBlock}`.trim();
       const payload = {
         client_id: noteData.client_id,
         initiated_by: 1, // Current user ID
@@ -321,12 +410,12 @@ const ClientCommunications: React.FC = () => {
         channel: noteData.channel,
         direction: noteData.direction,
         subject: noteData.subject || 'Note',
-        summary: noteData.summary,
-        notes: noteData.notes,
+        summary: summaryText || noteData.summary,
+        notes: combinedNotes || noteData.notes,
         sentiment: noteData.sentiment,
         follow_up_required: noteData.follow_up_required,
         next_steps: noteData.next_steps,
-        tags: noteData.tags || []
+        tags: Array.from(new Set([...(noteData.tags || []), ...(noteData.audioTranscript ? ['audio-transcript'] : [])]))
       };
       
       return apiRequest('POST', '/api/communications', payload);
@@ -347,8 +436,17 @@ const ClientCommunications: React.FC = () => {
         sentiment: 'positive',
         follow_up_required: false,
         next_steps: '',
-        tags: [] as string[]
+        tags: [] as string[],
+        audioTranscript: '',
+        audioSummary: '',
+        audioFileName: '',
+        audioDurationSeconds: undefined as number | undefined,
       });
+      setAudioProcessingState('idle');
+      setAudioError(null);
+      if (audioFileInputRef.current) {
+        audioFileInputRef.current.value = '';
+      }
       toast({
         title: "Note created",
         description: "Your note has been saved successfully."
@@ -986,10 +1084,58 @@ const ClientCommunications: React.FC = () => {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="interaction-audio">Attach Audio Recording</Label>
+                <Input
+                  id="interaction-audio"
+                  type="file"
+                  accept="audio/*"
+                  ref={audioFileInputRef}
+                  onChange={handleAudioUpload}
+                  disabled={audioProcessingState === 'processing'}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Upload meeting recordings to generate transcripts and summaries automatically.
+                </p>
+                {audioProcessingState === 'processing' && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Processing audio...
+                  </div>
+                )}
+                {audioError && (
+                  <p className="text-xs text-destructive">{audioError}</p>
+                )}
+                {newNoteData.audioFileName && newNoteData.audioTranscript && (
+                  <div className="rounded-md border border-muted-foreground/20 bg-muted/40 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2 text-sm font-medium">
+                      <span className="flex items-center gap-2"><FileAudio2 className="h-4 w-4 text-primary" /> {newNoteData.audioFileName}</span>
+                      <Button type="button" variant="ghost" size="sm" onClick={clearAudioUpload}>
+                        Remove
+                      </Button>
+                    </div>
+                    {typeof newNoteData.audioDurationSeconds === 'number' && (
+                      <p className="text-xs text-muted-foreground">Duration: ~{Math.round(newNoteData.audioDurationSeconds)} seconds</p>
+                    )}
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Transcript preview</p>
+                      <div className="max-h-32 overflow-y-auto rounded-md border border-dashed border-muted-foreground/30 bg-background/80 p-2 text-xs text-muted-foreground whitespace-pre-wrap">
+                        {newNoteData.audioTranscript}
+                      </div>
+                    </div>
+                    {newNoteData.audioSummary && (
+                      <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-foreground">
+                        <span className="font-semibold">AI Summary:</span> {newNoteData.audioSummary}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="sentiment">Sentiment</Label>
-                  <Select 
+                  <Select
                     value={newNoteData.sentiment} 
                     onValueChange={(value) => setNewNoteData(prev => ({ ...prev, sentiment: value }))}
                   >
