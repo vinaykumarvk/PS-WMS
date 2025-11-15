@@ -14,6 +14,7 @@ import bulkOrdersRouter from "./routes/bulk-orders";
 import integrationsRouter from "./routes/integrations";
 import { supabaseServer } from "./lib/supabase";
 import { addClient, updateFinancialProfile, saveClientDraft, getClientDraft } from "./routes/clients";
+import { registerModelOrchestrationRoutes } from "./routes/model-orchestration";
 import * as goalRoutes from "./routes/goals";
 import * as automationRoutes from "./routes/automation";
 import { triggerWebhooks } from "./services/webhook-service";
@@ -1146,6 +1147,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Model orchestration endpoints
+  registerModelOrchestrationRoutes(app, authMiddleware);
+
   // Goals routes
   app.post("/api/goals", authMiddleware, goalRoutes.createGoal);
   app.get("/api/goals", goalRoutes.getGoals);

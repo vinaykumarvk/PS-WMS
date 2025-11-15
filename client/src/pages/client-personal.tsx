@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import type { LucideIcon } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { 
   ArrowLeft, User, Phone, Mail, MapPin, Calendar, Briefcase, Home, Building, 
   CreditCard, Shield, Users, Wallet, PieChart, MessageCircle, Clock, Heart,
-  FileBarChart, CheckCircle, XCircle, AlertCircle, Lightbulb, Receipt, TrendingUp, TrendingDown, ChevronDown, ChevronUp, FileText, Edit
+  FileBarChart, CheckCircle, XCircle, AlertCircle, Lightbulb, Receipt, TrendingUp, TrendingDown, ChevronDown, ChevronUp, FileText, Edit, Sparkles, CalendarDays, Gift, GraduationCap, Baby, AlertTriangle, Info, Target
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,12 +14,27 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { clientApi } from "@/lib/api";
 import { generateAvatar, svgToDataURL } from "@/lib/avatarGenerator";
 import { getTierColor } from "@/lib/utils";
 import { ClientPageLayout } from "@/components/layout/ClientPageLayout";
 import { PersonalInfoForm } from "@/components/forms/personal-info-form";
 import { useToast } from "@/hooks/use-toast";
+import { formatDistanceToNow } from "date-fns";
+import { runClientProfilePreflight, type ModelIssue } from "@/lib/model-orchestration";
+
+
+type LifeEventAccent = "celebration" | "planning" | "alert";
+
+interface LifeEventInsight {
+  id: string;
+  title: string;
+  description: string;
+  badge?: string;
+  accent: LifeEventAccent;
+  icon: LucideIcon;
+}
 
 export default function ClientPersonalPage() {
   const [clientId, setClientId] = useState<number | null>(null);
@@ -32,6 +48,14 @@ export default function ClientPersonalPage() {
   const [isEditKycDialogOpen, setIsEditKycDialogOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [modelIssues, setModelIssues] = useState<ModelIssue[]>([]);
+  const [isModelCheckRunning, setIsModelCheckRunning] = useState(false);
+  const [modelCheckMetadata, setModelCheckMetadata] = useState<{
+    checkedAt: string;
+    validationTraceId?: string;
+    consistencyTraceId?: string;
+    context?: string;
+  } | null>(null);
   
   // Set page title
   useEffect(() => {
@@ -124,6 +148,211 @@ export default function ClientPersonalPage() {
     }
   };
 
+  const getOrdinalSuffix = (value: number) => {
+    const remainder = value % 100;
+    if (remainder >= 11 && remainder <= 13) return `${value}th`;
+    switch (value % 10) {
+      case 1:
+        return `${value}st`;
+      case 2:
+        return `${value}nd`;
+      case 3:
+        return `${value}rd`;
+      default:
+        return `${value}th`;
+    }
+  };
+
+  const lifeEventInsights = useMemo(() => {
+    if (!client) return [] as LifeEventInsight[];
+
+    const insights: LifeEventInsight[] = [];
+    const now = new Date();
+
+    const safeParseArray = (value: unknown): any[] => {
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      return [];
+    };
+
+    const majorLifeEvents = safeParseArray(parseJsonData(client.majorLifeEvents));
+    majorLifeEvents.slice(0, 4).forEach((event: any, index: number) => {
+      if (!event || !event.event) return;
+      const timeframe = typeof event.timeframe === "string" ? event.timeframe : undefined;
+      insights.push({
+        id: `major-life-${index}-${event.event}`,
+        title: event.event,
+        description: `Planned in ${timeframe ?? "the near future"}. Align investment buckets and liquidity for this milestone.`,
+        badge: timeframe,
+        accent: "planning",
+        icon: CalendarDays,
+      });
+    });
+
+    const dateFromString = (value: string | null | undefined) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const addUpcomingReminder = (
+      label: string,
+      targetDate: Date | null,
+      options: { accent: LifeEventAccent; icon: LucideIcon; preamble: string },
+    ) => {
+      if (!targetDate) return;
+      const futureDate = new Date(targetDate);
+      const nowLocal = new Date(now);
+      if (futureDate < nowLocal) {
+        futureDate.setFullYear(futureDate.getFullYear() + 1);
+      }
+      const daysUntil = Math.max(0, Math.round((futureDate.getTime() - nowLocal.getTime()) / (1000 * 60 * 60 * 24)));
+      if (daysUntil > 365) return;
+      insights.push({
+        id: `${label.toLowerCase().replace(/\s+/g, '-')}-${futureDate.getFullYear()}`,
+        title: label,
+        description: `${options.preamble} ${futureDate.toLocaleDateString()} (${formatDistanceToNow(futureDate, { addSuffix: true })}).`,
+        badge: daysUntil > 0 ? `${daysUntil} days` : "Today",
+        accent: options.accent,
+        icon: options.icon,
+      });
+    };
+
+    const dob = dateFromString(client.dateOfBirth as string | null);
+    if (dob) {
+      const age = now.getFullYear() - dob.getFullYear();
+      addUpcomingReminder(
+        `Upcoming ${getOrdinalSuffix(age + 1)} birthday`,
+        new Date(now.getFullYear(), dob.getMonth(), dob.getDate()),
+        {
+          accent: "celebration",
+          icon: Gift,
+          preamble: "Plan a relationship touchpoint on",
+        },
+      );
+    }
+
+    const anniversary = dateFromString(client.anniversaryDate as string | null);
+    if (anniversary) {
+      addUpcomingReminder(
+        "Anniversary milestone",
+        new Date(now.getFullYear(), anniversary.getMonth(), anniversary.getDate()),
+        {
+          accent: "celebration",
+          icon: Sparkles,
+          preamble: "Celebrate with a personalised outreach on",
+        },
+      );
+    }
+
+    const childrenDetails = safeParseArray(parseJsonData(client.childrenDetails));
+    childrenDetails.forEach((child: any, index: number) => {
+      if (!child) return;
+      const age = typeof child.age === "number" ? child.age : parseInt(child.age, 10);
+      if (Number.isNaN(age)) return;
+      if (age >= 14 && age <= 22) {
+        const yearsToGoal = Math.max(0, 18 - age);
+        insights.push({
+          id: `child-education-${index}`,
+          title: `${child.name || "Child"} education planning`,
+          description:
+            yearsToGoal > 0
+              ? `${child.name || "They"} will begin higher education in approximately ${yearsToGoal} year(s). Ensure goal-linked investments and insurance are aligned.`
+              : `${child.name || "They"} is at higher education age now. Confirm funding and cash-flow preparedness.`,
+          badge: yearsToGoal > 0 ? `${yearsToGoal} yrs` : "Now",
+          accent: yearsToGoal > 0 ? "planning" : "alert",
+          icon: GraduationCap,
+        });
+      }
+      if (age < 5) {
+        insights.push({
+          id: `child-safety-${index}`,
+          title: `${child.name || "Child"} early years planning`,
+          description: `${child.name || "They"} is ${age} year(s) old. Review insurance cover and create an education corpus while timelines are favourable.`,
+          badge: `${age} yrs`,
+          accent: "planning",
+          icon: Baby,
+        });
+      }
+    });
+
+    return insights;
+  }, [client]);
+
+  const lifeEventAccentClasses: Record<LifeEventAccent, string> = {
+    celebration: "border-amber-400 bg-amber-50/80 text-foreground dark:bg-amber-950/40",
+    planning: "border-sky-400 bg-sky-50/80 text-foreground dark:bg-sky-950/40",
+    alert: "border-rose-400 bg-rose-50/80 text-foreground dark:bg-rose-950/40",
+  };
+
+  const lifeEventIconClasses: Record<LifeEventAccent, string> = {
+    celebration: "text-amber-600 dark:text-amber-300",
+    planning: "text-sky-600 dark:text-sky-300",
+    alert: "text-rose-600 dark:text-rose-300",
+  };
+
+  const runModelPreflightAndUpdate = async (
+    updateData: Record<string, any>,
+    context: string,
+  ): Promise<boolean> => {
+    if (!clientId) {
+      toast({
+        title: "Missing client context",
+        description: "Unable to determine which client to update.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    setIsModelCheckRunning(true);
+    try {
+      const result = await runClientProfilePreflight({
+        clientId,
+        proposedChanges: updateData,
+        existingProfile: client,
+        context,
+      });
+
+      setModelIssues(result.issues);
+      setModelCheckMetadata({
+        checkedAt: result.checkedAt,
+        validationTraceId: result.validationTraceId,
+        consistencyTraceId: result.consistencyTraceId,
+        context,
+      });
+
+      const blocking = result.issues.filter((issue) => issue.severity === "error");
+      if (blocking.length > 0) {
+        toast({
+          title: "Changes blocked",
+          description: `Resolve ${blocking.length} critical issue${blocking.length > 1 ? "s" : ""} before saving.`,
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      if (result.issues.some((issue) => issue.severity === "warning")) {
+        toast({
+          title: "Model warnings detected",
+          description: "Review highlighted warnings before confirming the update.",
+        });
+      }
+
+      await updateClientMutation.mutateAsync(updateData);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Model validation failed";
+      toast({
+        title: "Validation check failed",
+        description: message,
+        variant: "destructive",
+      });
+      return false;
+    } finally {
+      setIsModelCheckRunning(false);
+    }
+  };
+
   const getKycStatusBadge = (status: string | null) => {
     if (!status) return { color: "secondary", icon: <AlertCircle className="h-3 w-3" /> };
     
@@ -177,7 +406,7 @@ export default function ClientPersonalPage() {
         </div>
         
         <div className="grid grid-cols-4 sm:grid-cols-7 gap-2 px-1">
-          <button 
+          <button
             className="flex items-center justify-center px-1 py-2 rounded-lg bg-primary/10 border border-primary/20 h-12 w-full"
             title="Personal Profile"
           >
@@ -199,7 +428,7 @@ export default function ClientPersonalPage() {
           >
             <Receipt className="h-6 w-6 text-muted-foreground" />
           </button>
-          
+
           <button 
             className="flex items-center justify-center px-1 py-2 rounded-lg hover:bg-muted transition-colors h-12 w-full"
             onClick={() => window.location.hash = `/clients/${clientId}/appointments`}
@@ -232,7 +461,7 @@ export default function ClientPersonalPage() {
             <FileBarChart className="h-6 w-6 text-muted-foreground" />
           </button>
           
-          <button 
+          <button
             className="flex items-center justify-center px-1 py-2 rounded-lg hover:bg-muted transition-colors h-12 w-full"
             onClick={() => window.location.hash = `/clients/${clientId}/insights`}
             title="Client Insights"
@@ -240,6 +469,96 @@ export default function ClientPersonalPage() {
             <Lightbulb className="h-6 w-6 text-muted-foreground" />
           </button>
         </div>
+
+        {lifeEventInsights.length > 0 && (
+          <div className="mt-6 space-y-3 px-1 sm:px-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Life event insights
+            </div>
+            <div className="space-y-3">
+              {lifeEventInsights.map((insight) => {
+                const Icon = insight.icon;
+                return (
+                  <div
+                    key={insight.id}
+                    className={`flex items-start gap-3 rounded-lg border-l-4 px-4 py-3 ${lifeEventAccentClasses[insight.accent]}`}
+                  >
+                    <Icon className={`h-5 w-5 mt-1 ${lifeEventIconClasses[insight.accent]}`} />
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-sm sm:text-base text-foreground">{insight.title}</span>
+                        {insight.badge && (
+                          <Badge variant="outline" className="text-xs uppercase tracking-wide">
+                            {insight.badge}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground leading-relaxed mt-1">{insight.description}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {modelIssues.length > 0 && (
+          <div className="mt-6 space-y-2 px-1 sm:px-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Model feedback</span>
+              {modelCheckMetadata?.checkedAt && (
+                <span className="text-xs text-muted-foreground">
+                  Checked {formatDistanceToNow(new Date(modelCheckMetadata.checkedAt), { addSuffix: true })}
+                </span>
+              )}
+            </div>
+            <div className="space-y-2">
+              {modelIssues.map((issue) => {
+                const Icon = issue.severity === "info" ? Info : AlertTriangle;
+                const variantClass = issue.severity === "warning"
+                  ? "border-amber-300 bg-amber-50/80 dark:bg-amber-950/40"
+                  : issue.severity === "info"
+                    ? "border-sky-300 bg-sky-50/80 dark:bg-sky-950/40"
+                    : undefined;
+                const iconClass = issue.severity === "warning"
+                  ? "text-amber-600 dark:text-amber-300"
+                  : issue.severity === "info"
+                    ? "text-sky-600 dark:text-sky-300"
+                    : "";
+                return (
+                  <Alert
+                    key={issue.id}
+                    variant={issue.severity === "error" ? "destructive" : "default"}
+                    className={variantClass}
+                  >
+                    <Icon className={`h-4 w-4 mt-1 ${iconClass}`} />
+                    <div>
+                      <AlertTitle>{issue.summary}</AlertTitle>
+                      {issue.detail && <AlertDescription>{issue.detail}</AlertDescription>}
+                      {issue.field && (
+                        <AlertDescription className="mt-1 text-xs text-muted-foreground">
+                          Field: {issue.field}
+                        </AlertDescription>
+                      )}
+                    </div>
+                  </Alert>
+                );
+              })}
+            </div>
+            {(modelCheckMetadata?.validationTraceId || modelCheckMetadata?.consistencyTraceId) && (
+              <p className="text-[11px] text-muted-foreground">
+                {modelCheckMetadata?.validationTraceId && (
+                  <>Validation trace: {modelCheckMetadata.validationTraceId}</>
+                )}
+                {modelCheckMetadata?.validationTraceId && modelCheckMetadata?.consistencyTraceId && " • "}
+                {modelCheckMetadata?.consistencyTraceId && (
+                  <>Consistency trace: {modelCheckMetadata.consistencyTraceId}</>
+                )}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main Content */}
@@ -913,8 +1232,7 @@ export default function ClientPersonalPage() {
               annualIncome: client?.annualIncome || "",
               workExperience: client?.workExperience?.toString() || "",
             }}
-            onSubmit={(data) => {
-              // Format the data for the API
+            onSubmit={async (data) => {
               const updateData: any = {
                 fullName: data.fullName,
                 initials: data.initials,
@@ -942,11 +1260,13 @@ export default function ClientPersonalPage() {
                 annualIncome: data.annualIncome || null,
                 workExperience: data.workExperience ? parseInt(data.workExperience) : null,
               };
-              updateClientMutation.mutate(updateData);
-              setIsEditPersonalDialogOpen(false);
+              const success = await runModelPreflightAndUpdate(updateData, 'personal-information');
+              if (success) {
+                setIsEditPersonalDialogOpen(false);
+              }
             }}
             onCancel={() => setIsEditPersonalDialogOpen(false)}
-            isLoading={updateClientMutation.isPending}
+            isLoading={updateClientMutation.isPending || isModelCheckRunning}
           />
         </DialogContent>
       </Dialog>
@@ -989,7 +1309,7 @@ export default function ClientPersonalPage() {
             </DialogDescription>
           </DialogHeader>
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               const formData = new FormData(e.currentTarget);
               const updateData = {
@@ -997,8 +1317,10 @@ export default function ClientPersonalPage() {
                 dependentsCount: formData.get("dependentsCount") ? parseInt(formData.get("dependentsCount") as string) : null,
                 familyFinancialGoals: formData.get("familyFinancialGoals") || null,
               };
-              updateClientMutation.mutate(updateData);
-              setIsEditFamilyDialogOpen(false);
+              const success = await runModelPreflightAndUpdate(updateData, 'family-information');
+              if (success) {
+                setIsEditFamilyDialogOpen(false);
+              }
             }}
           >
             <div className="py-4 space-y-4">
@@ -1035,10 +1357,10 @@ export default function ClientPersonalPage() {
               </div>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsEditFamilyDialogOpen(false)}>
+              <Button type="button" variant="outline" onClick={() => setIsEditFamilyDialogOpen(false)} disabled={isModelCheckRunning || updateClientMutation.isPending}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={updateClientMutation.isPending}>
+              <Button type="submit" disabled={updateClientMutation.isPending || isModelCheckRunning}>
                 Save Changes
               </Button>
             </DialogFooter>
@@ -1056,7 +1378,7 @@ export default function ClientPersonalPage() {
             </DialogDescription>
           </DialogHeader>
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               const formData = new FormData(e.currentTarget);
               const updateData = {
@@ -1065,8 +1387,10 @@ export default function ClientPersonalPage() {
                 taxResidencyStatus: formData.get("taxResidencyStatus") || null,
                 fatcaStatus: formData.get("fatcaStatus") || null,
               };
-              updateClientMutation.mutate(updateData);
-              setIsEditKycDialogOpen(false);
+              const success = await runModelPreflightAndUpdate(updateData, 'kyc-compliance');
+              if (success) {
+                setIsEditKycDialogOpen(false);
+              }
             }}
           >
             <div className="py-4 space-y-4">
@@ -1115,10 +1439,10 @@ export default function ClientPersonalPage() {
               </div>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsEditKycDialogOpen(false)}>
+              <Button type="button" variant="outline" onClick={() => setIsEditKycDialogOpen(false)} disabled={isModelCheckRunning || updateClientMutation.isPending}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={updateClientMutation.isPending}>
+              <Button type="submit" disabled={updateClientMutation.isPending || isModelCheckRunning}>
                 Save Changes
               </Button>
             </DialogFooter>
