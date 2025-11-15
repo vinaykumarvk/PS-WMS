@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Dashboard from '../dashboard';
 import { AuthProvider } from '@/context/auth-context';
+import { DashboardFilterProvider } from '@/context/dashboard-filter-context';
 import { ThemeProvider } from '@/components/theme-provider';
 
 global.fetch = vi.fn();
@@ -23,7 +24,11 @@ describe('Dashboard Module', () => {
     return render(
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
-          <AuthProvider>{component}</AuthProvider>
+          <AuthProvider>
+            <DashboardFilterProvider>
+              {component}
+            </DashboardFilterProvider>
+          </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>
     );
@@ -53,7 +58,11 @@ describe('Dashboard Module', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
 
     renderWithProviders(<Dashboard />);
 
@@ -76,7 +85,11 @@ describe('Dashboard Module', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
 
     renderWithProviders(<Dashboard />);
 
@@ -105,7 +118,11 @@ describe('Dashboard Module', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
 
     renderWithProviders(<Dashboard />);
 
@@ -128,7 +145,11 @@ describe('Dashboard Module', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
 
     renderWithProviders(<Dashboard />);
 
@@ -151,7 +172,11 @@ describe('Dashboard Module', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
 
     renderWithProviders(<Dashboard />);
 
@@ -174,7 +199,11 @@ describe('Dashboard Module', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
 
     renderWithProviders(<Dashboard />);
 
@@ -197,7 +226,11 @@ describe('Dashboard Module', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
 
     renderWithProviders(<Dashboard />);
 
@@ -220,7 +253,11 @@ describe('Dashboard Module', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([]) });
 
     renderWithProviders(<Dashboard />);
 

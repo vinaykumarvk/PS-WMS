@@ -1,35 +1,12 @@
-import React from 'react';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import React, { useMemo } from 'react';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { 
-  Home, 
-  Users, 
-  UserPlus, 
-  Calendar, 
-  CheckSquare, 
-  BarChart2, 
-  Package, 
-  Settings, 
-  HelpCircle,
-  FileText,
-  MessageSquare,
-  Bell,
-  X,
-  ShoppingCart,
-  Zap,
-  Repeat,
-} from 'lucide-react';
+import { X, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
-
-interface MenuItem {
-  id: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  href: string;
-  badge?: number;
-  onClick?: () => void;
-}
+import { navigationWorkspaces, type NavigationBadgeKey } from '@/config/navigation';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { useNavigationIndicators } from '@/hooks/use-navigation-indicators';
 
 interface MobileMenuDrawerProps {
   open: boolean;
@@ -37,26 +14,17 @@ interface MobileMenuDrawerProps {
   currentPath?: string;
 }
 
-const menuItems: MenuItem[] = [
-  { id: 'home', label: 'Home', icon: Home, href: '/' },
-  { id: 'clients', label: 'Clients', icon: Users, href: '/clients' },
-  { id: 'prospects', label: 'Prospects', icon: UserPlus, href: '/prospects' },
-  { id: 'calendar', label: 'Calendar', icon: Calendar, href: '/calendar' },
-  { id: 'tasks', label: 'Tasks', icon: CheckSquare, href: '/tasks' },
-  { id: 'products', label: 'Products', icon: Package, href: '/products' },
-  { id: 'order-management', label: 'Orders', icon: ShoppingCart, href: '/order-management' },
-  { id: 'sip-builder', label: 'SIP Builder', icon: Repeat, href: '/sip-builder' },
-  { id: 'automation', label: 'Automation', icon: Zap, href: '/automation' },
-  { id: 'analytics', label: 'Analytics', icon: BarChart2, href: '/analytics' },
-  { id: 'communications', label: 'Communications', icon: MessageSquare, href: '/communications' },
-  { id: 'announcements', label: 'Announcements', icon: Bell, href: '/announcements' },
-  { id: 'talking-points', label: 'Talking Points', icon: FileText, href: '/talking-points' },
-  { id: 'help', label: 'Help Center', icon: HelpCircle, href: '/help-center' },
-  { id: 'settings', label: 'Settings', icon: Settings, href: '/settings' },
-];
-
 export function MobileMenuDrawer({ open, onOpenChange, currentPath }: MobileMenuDrawerProps) {
   const isMobile = useIsMobile();
+  const indicators = useNavigationIndicators();
+  const workspaces = useMemo(() => {
+    return navigationWorkspaces
+      .map(workspace => ({
+        ...workspace,
+        items: workspace.items.filter(item => !item.platforms || item.platforms.includes("mobile"))
+      }))
+      .filter(workspace => workspace.items.length > 0);
+  }, []);
   
   const handleNavigate = (href: string) => {
     window.location.hash = href;
@@ -73,6 +41,24 @@ export function MobileMenuDrawer({ open, onOpenChange, currentPath }: MobileMenu
   if (!isMobile) {
     return null;
   }
+
+  const getNotificationStatus = (badgeKey?: NavigationBadgeKey) => {
+    if (!badgeKey) return false;
+    switch (badgeKey) {
+      case "appointments":
+        return indicators.hasAppointmentsToday;
+      case "tasks":
+        return indicators.hasOverdueTasks;
+      case "talkingPoints":
+        return indicators.hasRecentTalkingPoints;
+      case "announcements":
+        return indicators.hasRecentAnnouncements;
+      case "clients":
+        return indicators.hasRecentClients;
+      default:
+        return false;
+    }
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -91,48 +77,78 @@ export function MobileMenuDrawer({ open, onOpenChange, currentPath }: MobileMenu
           </div>
         </SheetHeader>
         
-        <div className="overflow-y-auto h-full px-6 py-4">
-          <div className="grid grid-cols-2 gap-3">
-            {menuItems.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.href);
-              
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => handleNavigate(item.href)}
-                  className={cn(
-                    'flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-all',
-                    'hover:bg-muted active:scale-95',
-                    active
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border bg-card'
-                  )}
-                >
-                  <div className="relative">
-                    <Icon className={cn(
-                      'h-6 w-6',
-                      active ? 'text-primary' : 'text-muted-foreground'
-                    )} />
-                    {item.badge && item.badge > 0 && (
-                      <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 rounded-full text-[10px] text-white flex items-center justify-center">
-                        {item.badge > 9 ? '9+' : item.badge}
-                      </span>
+        <div className="overflow-y-auto h-full px-4 py-4 space-y-4">
+          {workspaces.map((workspace) => (
+            <Collapsible
+              key={workspace.id}
+              defaultOpen={workspace.id === "client-management"}
+              className="rounded-2xl border border-border bg-card/60 px-3 py-2"
+            >
+              <CollapsibleTrigger asChild>
+                <button className="group flex w-full items-center justify-between text-left">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{workspace.label}</p>
+                    {workspace.description && (
+                      <p className="text-xs text-muted-foreground">{workspace.description}</p>
                     )}
                   </div>
-                  <span className={cn(
-                    'text-xs font-medium text-center',
-                    active ? 'text-primary' : 'text-muted-foreground'
-                  )}>
-                    {item.label}
-                  </span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground transition group-data-[state=open]:rotate-180" />
                 </button>
-              );
-            })}
-          </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-3 pt-3">
+                {workspace.quickLinks?.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {workspace.quickLinks.map((link) => (
+                      <button
+                        key={`${workspace.id}-${link.label}`}
+                        onClick={() => handleNavigate(link.href)}
+                        className="rounded-full border border-dashed border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:border-primary hover:text-primary"
+                      >
+                        {link.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="flex flex-col gap-2">
+                  {workspace.items.map((item) => {
+                    const Icon = item.icon;
+                    const active = isActive(item.href);
+                    const showNotification = getNotificationStatus(item.badgeKey);
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => handleNavigate(item.href)}
+                        className={cn(
+                          "flex items-center justify-between rounded-xl border px-3 py-3 text-left transition",
+                          active ? "border-primary bg-primary/5" : "border-border bg-background hover:bg-muted/60"
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={cn(
+                            "flex h-10 w-10 items-center justify-center rounded-full border",
+                            active ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground"
+                          )}>
+                            <Icon className="h-5 w-5" />
+                          </span>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-semibold text-foreground">{item.label}</span>
+                            {item.description && (
+                              <span className="text-xs text-muted-foreground">{item.description}</span>
+                            )}
+                          </div>
+                        </div>
+                        {showNotification && (
+                          <span className="h-2 w-2 rounded-full bg-red-500" aria-hidden="true" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          ))}
         </div>
       </SheetContent>
     </Sheet>
   );
 }
-

@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Home, Calendar, CheckSquare, Users, Menu } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { useQuery } from '@tanstack/react-query';
 import { MobileMenuDrawer } from './mobile-menu-drawer';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { bottomNavPrimaryItems, findNavigationItem, moreMenuItem, type NavigationItem } from '@/config/navigation';
+import { useNavigationIndicators } from '@/hooks/use-navigation-indicators';
 
 interface BottomNavigationProps {
   className?: string;
@@ -14,37 +13,13 @@ const BottomNavigation: React.FC<BottomNavigationProps> = ({ className = '', onM
   const [currentPath, setCurrentPath] = useState<string>('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const isMobile = useMediaQuery('(max-width: 768px)');
-
-  // Fetch data for notification dots
-  const { data: appointments } = useQuery({
-    queryKey: ['/api/appointments/today'],
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const { data: tasks } = useQuery({
-    queryKey: ['/api/tasks'],
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const { data: clients } = useQuery({
-    queryKey: ['/api/clients'],
-    staleTime: 5 * 60 * 1000,
-  });
-
-  // Calculate notification indicators
-  const hasAppointmentsToday = Array.isArray(appointments) && appointments.length > 0;
-  const hasOverdueTasks = Array.isArray(tasks) && tasks.some((task: any) => {
-    const dueDate = new Date(task.dueDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return dueDate <= today && task.status !== 'completed';
-  });
-  const hasRecentClients = Array.isArray(clients) && clients.some((client: any) => {
-    const createdDate = new Date(client.createdAt);
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    return createdDate >= threeDaysAgo;
-  });
+  const indicators = useNavigationIndicators();
+  const navigationItems = useMemo(() => {
+    const primaryItems: NavigationItem[] = bottomNavPrimaryItems
+      .map((id) => findNavigationItem(id))
+      .filter((item): item is NavigationItem => Boolean(item));
+    return [...primaryItems, moreMenuItem];
+  }, []);
   
   useEffect(() => {
     // Initialize with current hash path
@@ -61,21 +36,28 @@ const BottomNavigation: React.FC<BottomNavigationProps> = ({ className = '', onM
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
   
-  const isActive = (path: string): boolean => {
-    if (path === '/' && currentPath === '/') return true;
-    if (path === '/calendar' && currentPath === '/calendar') return true;
-    if (path === '/tasks' && currentPath === '/tasks') return true;
-    if (path === '/clients' && (currentPath === '/clients' || currentPath.startsWith('/clients/'))) return true;
-    if (path === '/menu' && (
+  const isActive = (item: NavigationItem): boolean => {
+    switch (item.id) {
+      case 'dashboard':
+        return currentPath === '/';
+      case 'calendar':
+        return currentPath === '/calendar';
+      case 'tasks':
+        return currentPath === '/tasks';
+      case 'clients':
+        return currentPath === '/clients' || currentPath.startsWith('/clients/');
+      case 'more':
+        return (
       currentPath === '/prospects' ||
       currentPath === '/announcements' ||
       currentPath === '/analytics' || 
       currentPath === '/products' ||
       currentPath === '/communications' ||
       currentPath === '/talking-points'
-    )) return true;
-    
-    return false;
+    );
+      default:
+        return currentPath === item.href;
+    }
   };
   
   const navigateTo = (path: string) => {
@@ -86,78 +68,40 @@ const BottomNavigation: React.FC<BottomNavigationProps> = ({ className = '', onM
     return null; // Don't render on non-mobile screens
   }
   
-  // Notification dot component
-  const NotificationDot = ({ show, className = '' }: { show: boolean; className?: string }) => {
-    if (!show) return null;
-    return (
-      <div className={`absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full ${className}`} />
-    );
-  };
-
   return (
     <div className={`fixed bottom-0 left-0 right-0 bg-background border-t border-border flex justify-around items-center h-16 z-50 ${className}`}>
-      <button 
-        onClick={() => navigateTo('/')}
-        className={`flex flex-col items-center justify-center w-full h-full ${isActive('/') ? 'text-primary' : 'text-muted-foreground'}`}
-        aria-label="Home"
-      >
-        <Home size={24} />
-        <span className="text-xs mt-1">Home</span>
-      </button>
-      
-      <button 
-        onClick={() => navigateTo('/calendar')}
-        className={`flex flex-col items-center justify-center w-full h-full ${isActive('/calendar') ? 'text-primary' : 'text-muted-foreground'}`}
-        aria-label="Calendar"
-      >
-        <div className="relative">
-          <Calendar size={24} />
-          {hasAppointmentsToday && (
-            <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />
-          )}
-        </div>
-        <span className="text-xs mt-1">Calendar</span>
-      </button>
-      
-      <button 
-        onClick={() => navigateTo('/tasks')}
-        className={`flex flex-col items-center justify-center w-full h-full ${isActive('/tasks') ? 'text-primary' : 'text-muted-foreground'}`}
-        aria-label="Tasks"
-      >
-        <div className="relative">
-          <CheckSquare size={24} />
-          {hasOverdueTasks && (
-            <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />
-          )}
-        </div>
-        <span className="text-xs font-medium mt-1">Tasks</span>
-      </button>
-      
-      <button 
-        onClick={() => navigateTo('/clients')}
-        className={`flex flex-col items-center justify-center w-full h-full ${isActive('/clients') ? 'text-primary' : 'text-muted-foreground'}`}
-        aria-label="Clients"
-      >
-        <div className="relative">
-          <Users size={24} />
-          {hasRecentClients && (
-            <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full" />
-          )}
-        </div>
-        <span className="text-xs mt-1">Clients</span>
-      </button>
-      
-      <button 
-        onClick={() => {
-          setIsMenuOpen(true);
-          onMoreClick?.();
-        }}
-        className={`flex flex-col items-center justify-center w-full h-full ${isActive('/menu') ? 'text-primary' : 'text-muted-foreground'} relative`}
-        aria-label="More"
-      >
-        <Menu size={24} />
-        <span className="text-xs mt-1">More</span>
-      </button>
+      {navigationItems.map((item) => {
+        const active = isActive(item);
+        const showIndicator =
+          (item.id === 'calendar' && indicators.hasAppointmentsToday) ||
+          (item.id === 'tasks' && indicators.hasOverdueTasks) ||
+          (item.id === 'clients' && indicators.hasRecentClients);
+        const indicatorColor = item.id === 'clients' ? 'bg-green-500' : 'bg-red-500';
+        const handleClick = () => {
+          if (item.id === 'more') {
+            setIsMenuOpen(true);
+            onMoreClick?.();
+          } else {
+            navigateTo(item.href);
+          }
+        };
+        return (
+          <button
+            key={item.id}
+            onClick={handleClick}
+            className={`flex flex-col items-center justify-center w-full h-full ${active ? 'text-primary' : 'text-muted-foreground'}`}
+            aria-label={item.label}
+          >
+            <div className="relative">
+              <item.icon size={24} />
+              {showIndicator && (
+                <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${indicatorColor}`} />
+              )}
+            </div>
+            <span className={`text-xs mt-1 ${item.id === 'tasks' ? 'font-medium' : ''}`}>{item.label}</span>
+          </button>
+        );
+      })}
       
       <MobileMenuDrawer 
         open={isMenuOpen} 

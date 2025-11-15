@@ -1,100 +1,43 @@
-import { useAuth } from "@/context/auth-context";
 import { cn } from "@/lib/utils";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Home,
-  Users,
-  TrendingUp,
-  Calendar,
-  CheckSquare,
-  BarChart2,
-  Package,
-  Settings,
-  FileText,
-  Lightbulb,
-  Bell,
-  ShoppingCart,
-  HelpCircle,
-  Zap,
-  Repeat,
-} from "lucide-react";
-import primesoftLogo from "../../assets/primesoft-logo.svg";
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-
-const navigationItems = [
-  { name: "Dashboard", href: "/", icon: Home },
-  { name: "Clients", href: "/clients", icon: Users },
-  { name: "Prospects", href: "/prospects", icon: TrendingUp },
-  { name: "Calendar", href: "/calendar", icon: Calendar },
-  { name: "Tasks", href: "/tasks", icon: CheckSquare },
-  { name: "Notes", href: "/communications", icon: FileText },
-  { name: "Insights", href: "/talking-points", icon: Lightbulb },
-  { name: "Updates", href: "/announcements", icon: Bell },
-  { name: "Products", href: "/products", icon: Package },
-  { name: "Order Management", href: "/order-management", icon: ShoppingCart },
-  { name: "SIP Builder", href: "/sip-builder", icon: Repeat },
-  { name: "Automation", href: "/automation", icon: Zap },
-  { name: "Analytics", href: "/analytics", icon: BarChart2 },
-  { name: "Help Center", href: "/help-center", icon: HelpCircle },
-];
+  navigationWorkspaces,
+  type NavigationBadgeKey,
+  type NavigationWorkspace,
+} from "@/config/navigation";
+import { useNavigationIndicators } from "@/hooks/use-navigation-indicators";
+import { SidebarGroup, SidebarGroupContent } from "@/components/ui/sidebar";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
 
 export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNavigate?: () => void }) {
-  const { user } = useAuth();
   const [currentPath, setCurrentPath] = useState(window.location.hash.replace(/^#/, '') || '/');
+  const indicators = useNavigationIndicators();
+  const defaultOpenWorkspaces = useMemo(() => {
+    return navigationWorkspaces.reduce<Record<string, boolean>>((acc, workspace) => {
+      acc[workspace.id] = workspace.id === "client-management" || workspace.id === "sales-pipeline";
+      return acc;
+    }, {});
+  }, []);
+  const [openWorkspaces, setOpenWorkspaces] = useState<Record<string, boolean>>(defaultOpenWorkspaces);
 
-  // Fetch data for notification dots
-  const { data: appointments } = useQuery({
-    queryKey: ['/api/appointments/today'],
-    staleTime: 5 * 60 * 1000,
-  });
+  const toggleWorkspace = (id: string) => {
+    setOpenWorkspaces(prev => ({ ...prev, [id]: !prev[id] }));
+  };
 
-  const { data: tasks } = useQuery({
-    queryKey: ['/api/tasks'],
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const { data: talkingPoints } = useQuery({
-    queryKey: ['/api/talking-points'],
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const { data: announcements } = useQuery({
-    queryKey: ['/api/announcements'],
-    staleTime: 5 * 60 * 1000,
-  });
-
-  // Calculate notification indicators
-  const hasAppointmentsToday = Array.isArray(appointments) && appointments.length > 0;
-  const hasOverdueTasks = Array.isArray(tasks) && tasks.some((task: any) => {
-    const dueDate = new Date(task.dueDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return dueDate <= today && task.status !== 'completed';
-  });
-  const hasRecentTalkingPoints = Array.isArray(talkingPoints) && talkingPoints.some((point: any) => {
-    const createdDate = new Date(point.created_at);
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    return createdDate >= threeDaysAgo && point.is_active;
-  });
-  const hasRecentAnnouncements = Array.isArray(announcements) && announcements.some((announcement: any) => {
-    const createdDate = new Date(announcement.created_at);
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    return createdDate >= threeDaysAgo && announcement.is_active;
-  });
-
-  // Notification dot helper function
-  const getNotificationStatus = (href: string) => {
-    switch (href) {
-      case '/calendar':
-        return hasAppointmentsToday;
-      case '/tasks':
-        return hasOverdueTasks;
-      case '/talking-points':
-        return hasRecentTalkingPoints;
-      case '/announcements':
-        return hasRecentAnnouncements;
+  const getNotificationStatus = (badgeKey?: NavigationBadgeKey) => {
+    if (!badgeKey) return false;
+    switch (badgeKey) {
+      case 'appointments':
+        return indicators.hasAppointmentsToday;
+      case 'tasks':
+        return indicators.hasOverdueTasks;
+      case 'talkingPoints':
+        return indicators.hasRecentTalkingPoints;
+      case 'announcements':
+        return indicators.hasRecentAnnouncements;
+      case 'clients':
+        return indicators.hasRecentClients;
       default:
         return false;
     }
@@ -119,66 +62,81 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
     }
   };
   
-  const sidebarContent = (
-    <div className={cn("flex flex-col w-full md:w-64 border-r border-unified bg-background text-foreground h-full transition-colors duration-300")}>
-
-      
-      {/* Navigation Links */}
-      <nav className="flex-1 px-2 py-4 bg-background space-y-1 overflow-y-auto transition-colors duration-300">
-        {navigationItems.map((item) => {
-          // Handle order-management routes: both /order-management and /orders should be active
-          const isActive = item.href === '/order-management' 
-            ? (currentPath === '/order-management' || currentPath === '/orders')
-            : currentPath === item.href;
-          const hasNotification = getNotificationStatus(item.href);
-          
-          return (
-            <a
-              key={item.name}
-              href={`#${item.href}`}
-              onClick={handleNavigation(item.href)}
-              className={cn(
-                "group flex items-center justify-between px-2 py-2 text-sm font-medium rounded-md relative transition-all duration-300 focus-enhanced",
-                isActive
-                  ? "brand-accent-bg text-primary-foreground font-semibold shadow-sm"
-                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground interactive-hover"
-              )}
+  const renderWorkspace = (workspace: NavigationWorkspace) => {
+    const isOpen = openWorkspaces[workspace.id];
+    return (
+      <SidebarGroup key={workspace.id} className="bg-background/60 rounded-lg border border-border/50">
+        <Collapsible open={isOpen} onOpenChange={() => toggleWorkspace(workspace.id)}>
+          <CollapsibleTrigger asChild>
+            <button
+              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition hover:bg-muted/60"
+              type="button"
             >
-              <div className="flex items-center">
-                <div className="relative mr-3">
-                  <item.icon
-                    className={cn(
-                      "h-5 w-5 transition-colors duration-300",
-                      isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-foreground"
-                    )}
-                  />
-                  {hasNotification && (
-                    <div className={cn(
-                      "absolute -top-1 -right-1 w-2 h-2 rounded-full",
-                      item.href === '/talking-points' || item.href === '/announcements' 
-                        ? "bg-blue-500" 
-                        : "bg-red-500"
-                    )} />
-                  )}
-                </div>
-                {item.name}
+              <div>
+                <p className="text-sm font-semibold text-foreground">{workspace.label}</p>
+                {workspace.description && (
+                  <p className="text-xs text-muted-foreground">{workspace.description}</p>
+                )}
               </div>
-            </a>
-          );
-        })}
-      </nav>
+              <ChevronDown className={cn("h-4 w-4 transition-transform", isOpen ? "rotate-180" : "rotate-0")} />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <SidebarGroupContent className="px-1 pb-2">
+              <div className="flex flex-col gap-1">
+                {workspace.items.map((item) => {
+                  const isActive =
+                    item.href === '/order-management'
+                      ? currentPath === '/order-management' || currentPath === '/orders'
+                      : currentPath === item.href;
+                  const hasNotification = getNotificationStatus(item.badgeKey);
+                  const notificationColor =
+                    item.badgeKey === 'talkingPoints' || item.badgeKey === 'announcements'
+                      ? "bg-blue-500"
+                      : "bg-red-500";
+                  return (
+                    <a
+                      key={item.id}
+                      href={`#${item.href}`}
+                      onClick={handleNavigation(item.href)}
+                      className={cn(
+                        "flex items-center justify-between rounded-md px-2 py-2 text-sm font-medium transition-colors",
+                        isActive
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        <item.icon className={cn("h-4 w-4", isActive ? "text-primary-foreground" : "text-muted-foreground")} />
+                        <span>{item.label}</span>
+                      </div>
+                      {hasNotification && (
+                        <span className={cn("h-2 w-2 rounded-full", notificationColor)} aria-hidden="true" />
+                      )}
+                    </a>
+                  );
+                })}
+              </div>
+            </SidebarGroupContent>
+          </CollapsibleContent>
+        </Collapsible>
+      </SidebarGroup>
+    );
+  };
+  
+  const sidebarInnerContent = (
+    <div className="p-3 space-y-3 overflow-y-auto">
+      {navigationWorkspaces.map(renderWorkspace)}
     </div>
   );
-  
-  // If it's for mobile, just return the content
+
   if (mobile) {
-    return sidebarContent;
+    return <div className="flex flex-col w-full">{sidebarInnerContent}</div>;
   }
-  
-  // For desktop, wrap it in the aside element with the appropriate classes
+
   return (
-    <aside className="hidden md:flex md:flex-shrink-0">
-      {sidebarContent}
+    <aside className="hidden md:flex md:flex-shrink-0 w-64 border-r border-border bg-background">
+      <div className="flex flex-col w-full h-full">{sidebarInnerContent}</div>
     </aside>
   );
 }

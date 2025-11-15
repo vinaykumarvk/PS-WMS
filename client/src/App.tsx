@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/context/auth-context";
 import { AccessibilityProvider } from "@/context/AccessibilityContext";
 import { NavigationProvider } from "@/context/navigation-context";
+import { DashboardFilterProvider } from "@/context/dashboard-filter-context";
 import { ThemeProvider } from "@/components/theme-provider";
 import { PrivacyOverlay } from "@/components/PrivacyOverlay";
 import { OnboardingTour } from "@/components/onboarding/onboarding-tour";
@@ -16,6 +17,8 @@ import BottomNavigation from "@/components/mobile/BottomNavigation";
 import SwipeableView from "@/components/mobile/SwipeableView";
 import { useState, useEffect } from "react";
 import { isOnline, saveToCache, getFromCache, CACHE_KEYS } from "@/lib/offlineCache";
+import { RouterProvider } from "react-router-dom";
+import { router, isRouteMigrated } from "./routes";
 
 import Dashboard from "@/pages/dashboard";
 import Clients from "@/pages/clients";
@@ -59,77 +62,8 @@ const OrderConfirmationPage = lazy(() => import("@/pages/order-management/compon
 const AutomationPage = lazy(() => import("@/pages/automation"));
 const SIPBuilderManager = lazy(() => import("@/pages/sip-builder-manager"));
 
-// Custom router implementation using hash-based routing
-function useHashRouter() {
-  const [currentRoute, setCurrentRoute] = useState(() => {
-    // Always ensure we start with hash-based routing
-    const hash = window.location.hash.replace(/^#/, '');
-    const pathname = window.location.pathname;
-    
-    // If we have a pathname but no hash, move the pathname to hash
-    if (pathname && pathname !== '/' && !hash) {
-      window.location.replace('#' + pathname);
-      return pathname;
-    }
-    
-    // Strip query parameters from initial hash for route matching
-    const [routePath] = (hash || '/').split('?');
-    return routePath || '/';
-  });
-  
-  useEffect(() => {
-    // Disable scroll restoration for hash navigation
-    if ('scrollRestoration' in history) {
-      history.scrollRestoration = 'manual';
-    }
-    
-    // Set initial hash if it's empty
-    if (!window.location.hash) {
-      window.location.hash = '/';
-    }
-    
-    const handleHashChange = () => {
-      const fullHash = window.location.hash.replace(/^#/, '') || '/';
-      console.log('Hash changed to:', fullHash);
-      
-      // Separate route path from fragment (e.g., "/clients/3/portfolio#action-items" -> "/clients/3/portfolio")
-      const [pathWithQuery, fragment] = fullHash.split('#');
-      
-      // Strip query parameters from path for route matching (e.g., "/clients/3/personal?section=family" -> "/clients/3/personal")
-      const [routePath] = pathWithQuery.split('?');
-      const cleanRoutePath = routePath || '/';
-      
-      // Scroll both window and main container only if no fragment (don't interfere with section scrolling)
-      if (!fragment) {
-        const scrollToTop = () => {
-          window.scrollTo(0, 0);
-          document.documentElement.scrollTop = 0;
-          document.body.scrollTop = 0;
-          const mainContent = document.getElementById('main-content');
-          if (mainContent) {
-            mainContent.scrollTop = 0;
-          }
-        };
-        
-        // Immediate scroll
-        scrollToTop();
-        
-        // Multiple delayed attempts to override any browser restoration
-        setTimeout(scrollToTop, 10);
-        setTimeout(scrollToTop, 50);
-        setTimeout(scrollToTop, 100);
-        setTimeout(scrollToTop, 200);
-      }
-      
-      setCurrentRoute(cleanRoutePath);
-    };
-    
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
-  
-  return currentRoute;
-}
+// Import hash router hook (extracted for reuse)
+import { useHashRouter } from "./hooks/useHashRouter";
 
 function AuthenticatedApp() {
   const currentRoute = useHashRouter();
@@ -220,52 +154,36 @@ function AuthenticatedApp() {
     }, 0);
     
     switch(true) {
-      case currentRoute === '/login':
-        return <LoginPage />;
-      case currentRoute === '/':
-        return <Dashboard />;
-      case currentRoute === '/clients':
-        return <Clients />;
-      case currentRoute === '/clients/add':
-        return <AddClientPage />;
-      case /^\/clients\/\d+\/financial-profile$/.test(currentRoute):
-        return <AddFinancialProfilePage />;
-      case currentRoute === '/prospects':
-        return <Prospects />;
-      case currentRoute === '/prospects/new':
-        return <AddProspect />;
-      case /^\/prospect-detail\/\d+$/.test(currentRoute):
-        const prospectId = parseInt(currentRoute.split('/')[2]);
-        return <AddProspect prospectId={prospectId} readOnly={true} />;
-      case /^\/prospect-edit\/\d+$/.test(currentRoute):
-        const editProspectId = parseInt(currentRoute.split('/')[2]);
-        return <AddProspect prospectId={editProspectId} readOnly={false} />;
-        
-      // Client detail pages
-      case /^\/clients\/\d+$/.test(currentRoute):
-        // When clicking a client, default to personal info page
-        return <ClientPersonal />;
-      case /^\/clients\/\d+\/actions$/.test(currentRoute):
-        return <ClientActions />;
-      case /^\/clients\/\d+\/personal/.test(currentRoute):
-        return <ClientPersonal />;
-      case /^\/clients\/\d+\/portfolio$/.test(currentRoute):
-        return <ClientPortfolio />;
-      case /^\/clients\/\d+\/interactions$/.test(currentRoute):
-        return <ClientInteractions />;
-      case /^\/clients\/\d+\/transactions$/.test(currentRoute):
-        return <ClientTransactions />;
-      case /^\/clients\/\d+\/communications$/.test(currentRoute):
-        return <ClientCommunications />;
-      case /^\/clients\/\d+\/appointments$/.test(currentRoute):
-        return <ClientAppointments />;
-      case /^\/clients\/\d+\/tasks$/.test(currentRoute):
-        return <ClientTasks />;
-      case /^\/clients\/\d+\/insights$/.test(currentRoute):
-        return <ClientInsights />;
-      case /^\/clients\/\d+\/goals$/.test(currentRoute):
-        return <ClientGoals />;
+      // Migrated routes are handled by React Router - skip them here
+      // case currentRoute === '/login': - MIGRATED (Phase 1)
+      // case currentRoute === '/': - MIGRATED (Phase 1)
+      // case currentRoute === '/clients': - MIGRATED (Phase 2)
+      // case currentRoute === '/clients/add': - MIGRATED (Phase 2)
+      // case /^\/clients\/\d+\/financial-profile$/: - MIGRATED (Phase 5)
+      // Migrated routes are handled by React Router - skip them here
+      // case currentRoute === '/prospects': - MIGRATED (Phase 2)
+      // case currentRoute === '/prospects/new': - MIGRATED (Phase 2)
+      // Dynamic routes migrated in Phase 3:
+      // case /^\/prospect-detail\/\d+$/: - MIGRATED (Phase 3)
+      // case /^\/prospect-edit\/\d+$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/actions$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/personal/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/portfolio$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/interactions$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/transactions$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/communications$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/appointments$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/tasks$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/insights$/: - MIGRATED (Phase 3)
+      // case /^\/clients\/\d+\/goals$/: - MIGRATED (Phase 3)
       case /^\/client-insights\/\d+$/.test(currentRoute):
+        // Legacy route - redirect to new format
+        const legacyClientId = currentRoute.match(/\/client-insights\/(\d+)/)?.[1];
+        if (legacyClientId) {
+          window.location.hash = `/clients/${legacyClientId}/insights`;
+          return null;
+        }
         return <ClientInsights />;
       case /^\/clients\/\d+\/portfolio-report$/.test(currentRoute):
         // Extract client ID and open portfolio report
@@ -280,81 +198,31 @@ function AuthenticatedApp() {
         }
         return <ClientPortfolio />;
       
-      case currentRoute === '/calendar':
-        return <Calendar />;
-      case currentRoute === '/appointments':
-        return <Calendar />;
-      case currentRoute === '/tasks':
-        return <Tasks />;
-      case currentRoute === '/communications':
-        return <ClientCommunications />;
-      case currentRoute === '/talking-points':
-        return <TalkingPoints />;
-      case currentRoute === '/announcements':
-        return <Announcements />;
-      case currentRoute === '/analytics':
-        return <AnalyticsDashboard />;
-      case currentRoute === '/analytics-legacy':
-        return <Analytics />;
-      case currentRoute === '/products':
-        return <Products />;
-      case currentRoute === '/order-management':
-      case currentRoute === '/orders':
-        return (
-          <Suspense fallback={
-            <div className="flex h-screen items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          }>
-            <OrderManagement />
-          </Suspense>
-        );
-      case currentRoute === '/automation':
-        return (
-          <Suspense fallback={
-            <div className="flex h-screen items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          }>
-            <AutomationPage />
-          </Suspense>
-        );
-      case /^\/order-management\/orders\/\d+\/confirmation$/.test(currentRoute):
-        const orderId = parseInt(currentRoute.split('/')[3]);
-        return (
-          <Suspense fallback={
-            <div className="flex h-screen items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          }>
-            <OrderConfirmationPage orderId={orderId} />
-          </Suspense>
-        );
-      case currentRoute === '/sip-builder':
-      case currentRoute === '/sip-manager':
-      case currentRoute === '/sip':
-        return (
-          <Suspense fallback={
-            <div className="flex h-screen items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          }>
-            <SIPBuilderManager />
-          </Suspense>
-        );
-      case currentRoute === '/qm-portal':
-        return <QMPortal />;
-      case /^\/knowledge-profiling(\?.*)?$/.test(currentRoute):
-        return <KnowledgeProfiling />;
-      case /^\/risk-profiling(\?.*)?$/.test(currentRoute):
-        return <RiskProfiling />;
-      case currentRoute === '/settings':
-        return <Settings />;
-      case currentRoute === '/profile':
-        return <Profile />;
-      case currentRoute === '/help':
-      case currentRoute === '/help-center':
-        return <HelpCenter />;
+      // Phase 5 routes migrated to React Router - skip them here
+      // case currentRoute === '/calendar': - MIGRATED (Phase 5)
+      // case currentRoute === '/appointments': - MIGRATED (Phase 5)
+      // case currentRoute === '/tasks': - MIGRATED (Phase 5)
+      // case currentRoute === '/communications': - MIGRATED (Phase 5)
+      // case currentRoute === '/talking-points': - MIGRATED (Phase 5)
+      // case currentRoute === '/announcements': - MIGRATED (Phase 5)
+      // case currentRoute === '/analytics': - MIGRATED (Phase 5)
+      // case currentRoute === '/analytics-legacy': - MIGRATED (Phase 5)
+      // case currentRoute === '/products': - MIGRATED (Phase 5)
+      // case currentRoute === '/order-management': - MIGRATED (Phase 5)
+      // case currentRoute === '/orders': - MIGRATED (Phase 5)
+      // case currentRoute === '/automation': - MIGRATED (Phase 5)
+      // case /^\/order-management\/orders\/\d+\/confirmation$/: - MIGRATED (Phase 5)
+      // case currentRoute === '/sip-builder': - MIGRATED (Phase 5)
+      // case currentRoute === '/sip-manager': - MIGRATED (Phase 5)
+      // case currentRoute === '/sip': - MIGRATED (Phase 5)
+      // case currentRoute === '/qm-portal': - MIGRATED (Phase 5)
+      // case /^\/knowledge-profiling(\?.*)?$/: - MIGRATED (Phase 5)
+      // case /^\/risk-profiling(\?.*)?$/: - MIGRATED (Phase 5)
+      // Migrated routes are handled by React Router - skip them here
+      // case currentRoute === '/settings': - MIGRATED
+      // case currentRoute === '/profile': - MIGRATED
+      // case currentRoute === '/help': - MIGRATED
+      // case currentRoute === '/help-center': - MIGRATED
       default:
         return <NotFound />;
     }
@@ -398,6 +266,7 @@ function AuthenticatedApp() {
 function App() {
   const { user, isLoading } = useAuth();
   const currentRoute = useHashRouter();
+  const routeIsMigrated = isRouteMigrated(window.location.hash || "#/");
 
   if (isLoading) {
     return (
@@ -410,6 +279,30 @@ function App() {
     );
   }
 
+  // If route is migrated to React Router, use RouterProvider
+  if (routeIsMigrated) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider defaultTheme="light">
+          <TooltipProvider>
+            <AccessibilityProvider>
+              <NavigationProvider>
+                <DashboardFilterProvider>
+                  <SkipLink />
+                  <Toaster />
+                  <RouterProvider router={router} />
+                  <PrivacyOverlay />
+                  {user && <OnboardingTour />}
+                </DashboardFilterProvider>
+              </NavigationProvider>
+            </AccessibilityProvider>
+          </TooltipProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    );
+  }
+
+  // Otherwise, use old router
   // If not authenticated and not on login page, redirect to login
   if (!user && currentRoute !== '/login') {
     window.location.hash = '/login';
@@ -433,11 +326,13 @@ function App() {
         <TooltipProvider>
           <AccessibilityProvider>
             <NavigationProvider>
-              <SkipLink />
-              <Toaster />
-              {user ? <AuthenticatedApp /> : <LoginPage />}
-              <PrivacyOverlay />
-              {user && <OnboardingTour />}
+              <DashboardFilterProvider>
+                <SkipLink />
+                <Toaster />
+                {user ? <AuthenticatedApp /> : <LoginPage />}
+                <PrivacyOverlay />
+                {user && <OnboardingTour />}
+              </DashboardFilterProvider>
             </NavigationProvider>
           </AccessibilityProvider>
         </TooltipProvider>
