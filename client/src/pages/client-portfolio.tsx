@@ -1,21 +1,19 @@
 import { useState, useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { 
   ArrowLeft, 
   TrendingUp, 
   LineChart,
   PieChart, 
   BarChart3, 
-  CalendarDays, 
-  Clock, 
-  IndianRupee, 
-  Percent, 
+  CalendarDays,
+  IndianRupee,
+  Percent,
   AlertTriangle,
   Shield,
   Lightbulb,
   Wallet,
   Landmark,
-  Globe,
   Building,
   ChevronRight,
   FileBarChart,
@@ -34,14 +32,16 @@ import {
   Calculator,
   FileText,
   Filter
+  , Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { clientApi } from "@/lib/api";
+import { clientApi, portfolioApi } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
@@ -49,6 +49,7 @@ import { getTierColor } from "@/lib/utils";
 import { ClientPageLayout } from "@/components/layout/ClientPageLayout";
 import { SecurityAvatar } from "@/components/ui/security-avatar";
 import { useToast } from "@/hooks/use-toast";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Import custom chart components
 import AssetAllocationChart from "../components/charts/AssetAllocationChart";
@@ -61,6 +62,13 @@ import FixedTooltipChart from "../components/charts/FixedTooltipChart";
 import PerformanceComparisonChart from "../components/charts/PerformanceComparisonChart";
 import { RetirementProjectionChart } from "../components/charts/RetirementProjectionChart";
 import PortfolioEfficiencyChart from "../components/charts/PortfolioEfficiencyChart";
+import type {
+  PortfolioAdviceItem,
+  PortfolioScenarioResponse,
+  PortfolioScenarioRequest,
+  PortfolioChartAllocation,
+} from "@shared/types/portfolio.types";
+import type { APIResponse } from "@shared/types/api.types";
 
 // Mock data for portfolio holdings
 const mockHoldings = [
@@ -143,6 +151,31 @@ const mockHoldings = [
   },
 ];
 
+const formatHoldingValue = (value: number) => `₹${(value / 100000).toFixed(1)}L`;
+
+function buildHoldingSummary(holding: any) {
+  const parts: string[] = [];
+  if (typeof holding.value === 'number') {
+    parts.push(`${formatHoldingValue(holding.value)} exposure`);
+  }
+  if (typeof holding.allocation === 'number') {
+    parts.push(`${holding.allocation}% of portfolio`);
+  }
+  if (typeof holding.gain === 'number') {
+    parts.push(`gain ${holding.gain > 0 ? '+' : ''}${holding.gain}%`);
+  }
+  if (typeof holding.oneYearReturn === 'number') {
+    const benchmarkPart = typeof holding.benchmarkReturn === 'number'
+      ? ` vs ${holding.benchmarkReturn > 0 ? '+' : ''}${holding.benchmarkReturn}% benchmark`
+      : '';
+    parts.push(`1Y ${holding.oneYearReturn > 0 ? '+' : ''}${holding.oneYearReturn}%${benchmarkPart}`);
+  }
+  if (typeof holding.alphaReturn === 'number') {
+    parts.push(`alpha ${holding.alphaReturn > 0 ? '+' : ''}${holding.alphaReturn}%`);
+  }
+  return parts.join(' · ');
+}
+
 // Mock data for performance periods
 const performancePeriods = [
   { label: "1M", value: 2.8, benchmark: 2.3, alpha: 0.5 },
@@ -156,7 +189,7 @@ const performancePeriods = [
 ];
 
 // Mock asset allocation data
-const mockAssetAllocation = {
+const mockAssetAllocation: PortfolioChartAllocation = {
   Equity: 65,
   "Fixed Income": 20,
   Gold: 7.5,
@@ -417,7 +450,8 @@ function SortableHoldingsTable({
   const hasMoreHoldings = sortedHoldings.length > 5;
 
   return (
-    <div>
+    <TooltipProvider delayDuration={150}>
+      <div>
       {/* Sorting Controls */}
       <div className="flex items-center gap-2 mb-4">
         <Filter className="h-4 w-4 text-muted-foreground" />
@@ -458,14 +492,21 @@ function SortableHoldingsTable({
             {displayedHoldings.map((holding, index) => (
               <tr key={index} className="border-b border-border hover:bg-muted/50">
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <SecurityAvatar 
-                      securityName={holding.name} 
-                      securityType={holding.type}
-                      size="sm"
-                    />
-                    <span className="font-medium">{holding.name}</span>
-                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-3 cursor-help">
+                        <SecurityAvatar
+                          securityName={holding.name}
+                          securityType={holding.type}
+                          size="sm"
+                        />
+                        <span className="font-medium">{holding.name}</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <p className="text-xs leading-relaxed">{buildHoldingSummary(holding)}</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">{holding.type}</td>
                 <td className="px-4 py-3 text-right font-medium">₹{(holding.value / 100000).toFixed(1)}L</td>
@@ -495,8 +536,8 @@ function SortableHoldingsTable({
           <div key={index} className="p-3 rounded-lg border border-border bg-card">
             <div className="flex justify-between items-start mb-2">
               <div className="flex items-center gap-2">
-                <SecurityAvatar 
-                  securityName={holding.name} 
+                <SecurityAvatar
+                  securityName={holding.name}
                   securityType={holding.type}
                   size="sm"
                 />
@@ -508,6 +549,20 @@ function SortableHoldingsTable({
               <div className="text-right">
                 <div className="font-medium text-sm">₹{(holding.value / 100000).toFixed(1)}L</div>
                 <div className="text-xs text-muted-foreground">{holding.allocation}% allocation</div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="mt-1 inline-flex items-center justify-center rounded-full border border-border bg-background p-1 text-muted-foreground hover:text-foreground"
+                      aria-label={`Explain ${holding.name}`}
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" className="max-w-xs">
+                    <p className="text-xs leading-relaxed">{buildHoldingSummary(holding)}</p>
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
             
@@ -567,7 +622,8 @@ function SortableHoldingsTable({
           </Button>
         </div>
       )}
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -743,6 +799,9 @@ export default function ClientPortfolioPage() {
   const [clientId, setClientId] = useState<number | null>(null);
   const [holdingsSortBy, setHoldingsSortBy] = useState('value_desc');
   const [showAllHoldings, setShowAllHoldings] = useState(false);
+  const [scenarioPrompt, setScenarioPrompt] = useState('');
+  const [scenarioAllocation, setScenarioAllocation] = useState<Record<string, number> | null>(null);
+  const [scenarioResult, setScenarioResult] = useState<PortfolioScenarioResponse | null>(null);
   const { toast } = useToast();
   
   // Set page title
@@ -794,6 +853,50 @@ export default function ClientPortfolioPage() {
     queryKey: ['client', clientId],
     queryFn: () => clientId ? clientApi.getClient(clientId) : null,
     enabled: !!clientId,
+  });
+
+  const { data: adviceResponse, isLoading: adviceLoading } = useQuery({
+    queryKey: ['portfolio-advice', clientId],
+    queryFn: () => clientId ? portfolioApi.getAdvice(clientId) : null,
+    enabled: !!clientId,
+  });
+
+  const adviceItems = (adviceResponse?.data as PortfolioAdviceItem[]) || [];
+
+  const baseAssetAllocation: PortfolioChartAllocation = (client as any)?.assetAllocation || mockAssetAllocation;
+  const effectiveAssetAllocation = scenarioAllocation || baseAssetAllocation;
+  const rebalancingAdvice = adviceItems.filter(item => item.category === 'rebalance');
+  const taxLossAdvice = adviceItems.find(item => item.category === 'tax_loss');
+
+  const scenarioMutation = useMutation<APIResponse<PortfolioScenarioResponse>, Error, PortfolioScenarioRequest>({
+    mutationFn: (payload) => portfolioApi.runScenario(payload),
+    onSuccess: (response) => {
+      if (!response.success || !response.data) {
+        toast({
+          variant: 'destructive',
+          title: 'Scenario analysis failed',
+          description: response.message || 'Unable to interpret the scenario prompt.',
+        });
+        return;
+      }
+
+      setScenarioResult(response.data);
+      if (response.data.adjustments?.allocation) {
+        setScenarioAllocation(response.data.adjustments.allocation);
+      }
+
+      toast({
+        title: 'Scenario applied',
+        description: response.data.summary,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Scenario analysis failed',
+        description: error.message,
+      });
+    },
   });
   
   const handleBackClick = () => {
@@ -1033,8 +1136,8 @@ export default function ClientPortfolioPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="flex flex-col">
                     <div className="flex-1 h-52">
-                      <AssetAllocationChart 
-                        data={(client as any)?.assetAllocation || mockAssetAllocation} 
+                      <AssetAllocationChart
+                        data={effectiveAssetAllocation}
                       />
                     </div>
                   </div>
@@ -1076,7 +1179,77 @@ export default function ClientPortfolioPage() {
               </CardFooter>
             </Card>
           </div>
-          
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle>Scenario Explorer</CardTitle>
+              <CardDescription>Ask the model to simulate allocation changes</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Textarea
+                placeholder="e.g. Shift 10% from equity to debt and raise cash by 5%"
+                value={scenarioPrompt}
+                onChange={(event) => setScenarioPrompt(event.target.value)}
+                rows={3}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Button
+                  onClick={() => {
+                    if (!scenarioPrompt.trim()) {
+                      toast({
+                        variant: 'destructive',
+                        title: 'Enter a scenario',
+                        description: 'Describe how you want to adjust the portfolio.',
+                      });
+                      return;
+                    }
+
+                    scenarioMutation.mutate({
+                      clientId: clientId ?? undefined,
+                      prompt: scenarioPrompt,
+                      baseAllocation: effectiveAssetAllocation,
+                    });
+                  }}
+                  disabled={scenarioMutation.isPending || !scenarioPrompt.trim()}
+                >
+                  {scenarioMutation.isPending ? 'Interpreting...' : 'Run Scenario'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setScenarioPrompt('');
+                    setScenarioResult(null);
+                    setScenarioAllocation(null);
+                  }}
+                >
+                  Reset
+                </Button>
+              </div>
+              {scenarioResult && (
+                <div className="rounded-md border border-border bg-muted/40 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-foreground">{scenarioResult.summary}</p>
+                    {scenarioResult.adjustments?.riskShift && (
+                      <Badge variant="secondary" className="capitalize">
+                        {scenarioResult.adjustments.riskShift} risk
+                      </Badge>
+                    )}
+                  </div>
+                  {typeof scenarioResult.adjustments?.expectedReturnDelta === 'number' && (
+                    <p className="text-xs text-muted-foreground">
+                      Expected return delta: {scenarioResult.adjustments.expectedReturnDelta?.toFixed(2)}%
+                    </p>
+                  )}
+                  <ul className="list-disc pl-4 text-xs text-muted-foreground space-y-1">
+                    {scenarioResult.insights.map((insight, index) => (
+                      <li key={index}>{insight}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2">
@@ -1658,41 +1831,59 @@ export default function ClientPortfolioPage() {
               <CardHeader className="pb-3 bg-amber-600 dark:bg-amber-800 text-white transition-colors">
                 <CardTitle className="flex items-center text-lg text-white font-semibold">
                   <AlertCircle className="h-5 w-5 mr-2 text-white" />
-                  Portfolio Alerts
+                  Model Rebalancing Signals
                 </CardTitle>
                 <CardDescription className="text-amber-100 dark:text-amber-200">Important notices about your investments</CardDescription>
               </CardHeader>
               <CardContent className="p-5">
                 <div className="space-y-4">
-                  <div className="p-4 bg-muted border-l-4 border-amber-500 rounded-r-lg shadow-sm">
-                    <h4 className="text-sm font-medium text-foreground flex items-center">
-                      <AlertTriangle className="h-4 w-4 mr-2 text-amber-500" />
-                      <span className="font-semibold">Portfolio Rebalancing Due</span>
-                    </h4>
-                    <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                      Your equity allocation has drifted 5% above target. Consider rebalancing to maintain your risk profile.
-                    </p>
-                    <div className="mt-3">
-                      <Button size="sm" variant="outline" className="text-xs">
-                        Review Allocation
-                      </Button>
+                  {adviceLoading && (
+                    <div className="space-y-3">
+                      <Skeleton className="h-16 w-full" />
+                      <Skeleton className="h-16 w-full" />
                     </div>
-                  </div>
-                  
-                  <div className="p-4 bg-muted border-l-4 border-blue-500 rounded-r-lg shadow-sm">
-                    <h4 className="text-sm font-medium text-foreground flex items-center">
-                      <Clock className="h-4 w-4 mr-2 text-blue-500" />
-                      <span className="font-semibold">Fixed Deposit Maturing</span>
-                    </h4>
-                    <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                      Your HDFC Bank FD of ₹3,00,000 is maturing in 15 days. Contact your RM for reinvestment options.
+                  )}
+
+                  {!adviceLoading && rebalancingAdvice.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      The model has not detected any urgent rebalancing opportunities. Current allocation is close to the target mix.
                     </p>
-                    <div className="mt-3">
-                      <Button size="sm" variant="outline" className="text-xs">
-                        View Options
-                      </Button>
+                  )}
+
+                  {rebalancingAdvice.map((item) => (
+                    <div key={item.id} className="p-4 bg-muted border-l-4 border-amber-500 rounded-r-lg shadow-sm">
+                      <h4 className="text-sm font-medium text-foreground flex items-center justify-between">
+                        <span className="flex items-center">
+                          <AlertTriangle className="h-4 w-4 mr-2 text-amber-500" />
+                          <span className="font-semibold">{item.title}</span>
+                        </span>
+                        {item.metadata?.priority && (
+                          <Badge variant="outline" className="uppercase tracking-wide text-[10px]">
+                            {item.metadata.priority}
+                          </Badge>
+                        )}
+                      </h4>
+                      <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                        {item.summary}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground/80 mt-1">
+                        {item.rationale}
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        {item.actions.map((action, index) => (
+                          <div key={index} className="flex items-center justify-between text-xs bg-background/60 border border-border/60 rounded-md p-2">
+                            <div>
+                              <div className="font-medium text-foreground">{action.label}</div>
+                              <div className="text-muted-foreground text-[11px]">{action.description}</div>
+                            </div>
+                            {action.amount !== undefined && (
+                              <span className="text-xs font-semibold">₹{Math.round(action.amount).toLocaleString('en-IN')}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -1701,49 +1892,54 @@ export default function ClientPortfolioPage() {
               <CardHeader className="pb-3 bg-indigo-600 dark:bg-indigo-800 text-white transition-colors">
                 <CardTitle className="flex items-center text-lg text-white font-semibold">
                   <Lightbulb className="h-5 w-5 mr-2 text-white" />
-                  Investment Opportunities
+                  Tax-Loss Harvesting
                 </CardTitle>
                 <CardDescription className="text-indigo-100 dark:text-indigo-200">Personalized recommendations</CardDescription>
               </CardHeader>
               <CardContent className="p-5">
                 <div className="space-y-4">
-                  <div className="p-4 bg-muted border-l-4 border-indigo-500 rounded-r-lg shadow-sm">
-                    <h4 className="text-sm font-medium text-foreground flex items-center">
-                      <Wallet className="h-4 w-4 mr-2 text-indigo-500" />
-                      <span className="font-semibold">Increase Tax-Efficient Investments</span>
-                    </h4>
-                    <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                      Based on your tax bracket, consider additional ELSS funds to optimize tax savings.
+                  {adviceLoading && (
+                    <div className="space-y-3">
+                      <Skeleton className="h-16 w-full" />
+                    </div>
+                  )}
+
+                  {!adviceLoading && !taxLossAdvice && (
+                    <p className="text-xs text-muted-foreground">
+                      No significant losses were detected. The model suggests monitoring positions and revisiting closer to financial year-end.
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge variant="outline">ELSS Funds</Badge>
-                      <Badge variant="outline">Tax Planning</Badge>
+                  )}
+
+                  {taxLossAdvice && (
+                    <div className="p-4 bg-muted border-l-4 border-indigo-500 rounded-r-lg shadow-sm space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h4 className="text-sm font-semibold text-foreground flex items-center">
+                            <Wallet className="h-4 w-4 mr-2 text-indigo-500" />
+                            {taxLossAdvice.title}
+                          </h4>
+                          <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                            {taxLossAdvice.summary}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">Tax</Badge>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground/80">{taxLossAdvice.rationale}</p>
+                      <div className="space-y-2">
+                        {taxLossAdvice.actions.map((action, index) => (
+                          <div key={index} className="flex items-center justify-between text-xs bg-background/60 border border-border/60 rounded-md p-2">
+                            <div>
+                              <div className="font-medium text-foreground">{action.label}</div>
+                              <div className="text-muted-foreground text-[11px]">{action.description}</div>
+                            </div>
+                            {action.amount !== undefined && (
+                              <span className="text-xs font-semibold">₹{Math.round(action.amount).toLocaleString('en-IN')}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="mt-3">
-                      <Button size="sm" variant="outline" className="text-xs">
-                        Explore Options
-                      </Button>
-                    </div>
-                  </div>
-                  
-                  <div className="p-4 bg-muted border-l-4 border-indigo-500 rounded-r-lg shadow-sm">
-                    <h4 className="text-sm font-medium text-foreground flex items-center">
-                      <Globe className="h-4 w-4 mr-2 text-indigo-500" />
-                      <span className="font-semibold">International Diversification</span>
-                    </h4>
-                    <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                      Add exposure to US markets through index funds to increase geographic diversification.
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge variant="outline">International Equity</Badge>
-                      <Badge variant="outline">Diversification</Badge>
-                    </div>
-                    <div className="mt-3">
-                      <Button size="sm" variant="outline" className="text-xs">
-                        View Funds
-                      </Button>
-                    </div>
-                  </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

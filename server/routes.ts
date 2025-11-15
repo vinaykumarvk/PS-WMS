@@ -6681,6 +6681,10 @@ startxref
     getRebalancingSuggestions,
     getHoldings,
   } = await import('./services/portfolio-analysis-service');
+  const {
+    generatePortfolioAdvice,
+    runScenarioAnalysis,
+  } = await import('./services/portfolio-advice-service');
 
   // Get current portfolio allocation
   app.get('/api/portfolio/current-allocation', authMiddleware, async (req: Request, res: Response) => {
@@ -6822,7 +6826,7 @@ startxref
   app.get('/api/portfolio/holdings', authMiddleware, async (req: Request, res: Response) => {
     try {
       const clientId = parseInt(req.query.clientId as string);
-      const schemeId = req.query.schemeId 
+      const schemeId = req.query.schemeId
         ? parseInt(req.query.schemeId as string)
         : undefined;
 
@@ -6835,7 +6839,7 @@ startxref
       }
 
       const result = await getHoldings(clientId, schemeId);
-      
+
       if (!result.success) {
         return res.status(400).json(result);
       }
@@ -6846,6 +6850,78 @@ startxref
       res.status(500).json({
         success: false,
         message: 'Failed to fetch holdings',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  app.get('/api/portfolio/advice', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.query.clientId as string);
+
+      if (!clientId || isNaN(clientId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Client ID is required',
+          errors: ['Client ID is required'],
+        });
+      }
+
+      const result = await generatePortfolioAdvice(clientId);
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Get portfolio advice error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate portfolio advice',
+        errors: [error.message || 'Unknown error'],
+      });
+    }
+  });
+
+  app.post('/api/portfolio/scenario', authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { prompt, baseAllocation, clientId } = req.body || {};
+
+      if (!prompt || typeof prompt !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: 'Prompt is required',
+          errors: ['Prompt is required'],
+        });
+      }
+
+      if (!baseAllocation || typeof baseAllocation !== 'object') {
+        return res.status(400).json({
+          success: false,
+          message: 'Base allocation is required',
+          errors: ['Base allocation is required'],
+        });
+      }
+
+      const parsedClientId = typeof clientId === 'string' ? parseInt(clientId, 10) : clientId;
+      const scenarioResponse = runScenarioAnalysis({
+        clientId: typeof parsedClientId === 'number' && !isNaN(parsedClientId)
+          ? parsedClientId
+          : undefined,
+        prompt,
+        baseAllocation,
+      });
+
+      res.json({
+        success: true,
+        data: scenarioResponse,
+      });
+    } catch (error: any) {
+      console.error('Scenario analysis error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to analyse scenario',
         errors: [error.message || 'Unknown error'],
       });
     }
