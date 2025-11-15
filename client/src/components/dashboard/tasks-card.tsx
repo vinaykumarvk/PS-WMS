@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -11,8 +12,32 @@ interface Task {
   id: number;
   title: string;
   description?: string;
-  dueDate?: Date;
+  dueDate?: Date | string | null;
   completed: boolean;
+  priority?: string | null;
+  aiPriorityScore?: number;
+  aiPriorityLabel?: "critical" | "high" | "medium" | "low";
+  autoCompletePrompt?: string | null;
+}
+
+const priorityBadgeStyles: Record<NonNullable<Task["aiPriorityLabel"]>, string> = {
+  critical: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+  high: "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-300",
+  medium: "bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-300",
+  low: "bg-slate-100 text-slate-900 dark:bg-slate-900/30 dark:text-slate-300",
+};
+
+function getPriorityBadge(task: Task) {
+  const label = task.aiPriorityLabel ?? "medium";
+  const displayScore = typeof task.aiPriorityScore === "number" ? Math.round(task.aiPriorityScore) : "--";
+  return (
+    <Badge
+      variant="secondary"
+      className={`text-[10px] font-semibold tracking-wide uppercase ${priorityBadgeStyles[label]}`}
+    >
+      AI {label} · {displayScore}
+    </Badge>
+  );
 }
 
 export function TasksCard() {
@@ -43,9 +68,9 @@ export function TasksCard() {
     updateTaskMutation.mutate({ id: task.id, completed });
   };
   
-  const formatDueDate = (date?: Date | string) => {
+  const formatDueDate = (date?: Date | string | null) => {
     if (!date) return "";
-    
+
     const dueDate = new Date(date);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -112,11 +137,17 @@ export function TasksCard() {
                   }`}>
                     {task.title}
                   </span>
-                  <span className={`block text-xs mt-1 ${
-                    task.completed ? "text-muted-foreground" : "text-muted-foreground"
-                  }`}>
-                    {task.completed ? "Completed" : formatDueDate(task.dueDate)}
-                  </span>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    {getPriorityBadge(task)}
+                    <span className={`text-xs ${task.completed ? "text-muted-foreground" : "text-muted-foreground"}`}>
+                      {task.completed ? "Completed" : formatDueDate(task.dueDate)}
+                    </span>
+                  </div>
+                  {task.autoCompletePrompt && !task.completed && (
+                    <p className="mt-2 text-[11px] text-primary/80 italic">
+                      {task.autoCompletePrompt}
+                    </p>
+                  )}
                 </label>
               </div>
             </div>

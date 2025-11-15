@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight, Calendar, CheckSquare, Users, AlertCircle, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
 
@@ -18,9 +19,13 @@ interface Appointment {
 interface Task {
   id: number;
   title: string;
-  priority: string;
-  dueDate: string;
-  status: string;
+  priority?: string | null;
+  dueDate?: string | null;
+  status?: string;
+  completed?: boolean;
+  aiPriorityScore?: number;
+  aiPriorityLabel?: "critical" | "high" | "medium" | "low";
+  autoCompletePrompt?: string | null;
 }
 
 interface DealClosure {
@@ -109,9 +114,31 @@ export function ActionItemsPriorities() {
   };
 
   // Filter urgent tasks (not completed and high/medium priority)
-  const urgentTasks = tasks.filter((task: Task) => 
-    !task.completed && (task.priority === 'high' || task.priority === 'medium')
-  ).slice(0, 3);
+  const urgentTasks = (tasks as Task[])
+    .filter((task) => !task.completed)
+    .sort((a, b) => (b.aiPriorityScore ?? 0) - (a.aiPriorityScore ?? 0))
+    .slice(0, 3);
+
+  const priorityBadgeStyles: Record<"critical" | "high" | "medium" | "low", string> = {
+    critical: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+    high: "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-300",
+    medium: "bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-300",
+    low: "bg-slate-100 text-slate-900 dark:bg-slate-900/30 dark:text-slate-300",
+  };
+
+  const renderPriorityBadge = (task: Task) => {
+    const label = task.aiPriorityLabel ?? (task.priority as "critical" | "high" | "medium" | "low" | undefined) ?? "medium";
+    const score = typeof task.aiPriorityScore === "number" ? Math.round(task.aiPriorityScore) : null;
+    return (
+      <Badge
+        key={`priority-${task.id}`}
+        variant="secondary"
+        className={`text-[10px] font-semibold uppercase tracking-wide ${priorityBadgeStyles[label]}`}
+      >
+        AI {label}{score !== null ? ` · ${score}` : ""}
+      </Badge>
+    );
+  };
 
   // Filter high priority alerts (high severity)
   const priorityAlerts = alerts.filter((alert: Alert) => 
@@ -257,11 +284,23 @@ export function ActionItemsPriorities() {
                               )}
                               
                               {key === 'tasks' && (
-                                <div>
-                                  <div className="font-medium">{item.title}</div>
-                                  <div className="text-muted-foreground">
-                                    Priority: {item.priority} • Status: {item.status}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="font-medium">{item.title}</div>
+                                    <div className="flex items-center gap-2">
+                                      {renderPriorityBadge(item)}
+                                      {item.dueDate && (
+                                        <span className="text-xs text-muted-foreground">
+                                          {format(new Date(item.dueDate), 'MMM d')}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
+                                  {item.autoCompletePrompt && (
+                                    <p className="text-xs text-primary/80">
+                                      {item.autoCompletePrompt}
+                                    </p>
+                                  )}
                                 </div>
                               )}
                               

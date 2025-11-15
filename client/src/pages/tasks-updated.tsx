@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
 import { Plus, Search, ChevronDown, ChevronUp, AlertTriangle, CheckSquare } from "lucide-react";
 import {
   Dialog,
@@ -25,11 +26,17 @@ import { format, isToday, isAfter, isBefore, isYesterday, addDays } from "date-f
 interface Task {
   id: number;
   title: string;
-  description?: string;
-  dueDate?: string;
+  description?: string | null;
+  dueDate?: string | null;
   completed: boolean;
-  clientId?: number;
-  prospectId?: number;
+  clientId?: number | null;
+  prospectId?: number | null;
+  priority?: string | null;
+  aiPriorityScore?: number;
+  aiPriorityLabel?: "critical" | "high" | "medium" | "low";
+  aiPriorityRationale?: string;
+  autoCompletePrompt?: string | null;
+  autoCompleteSource?: "order" | "appointment" | null;
 }
 
 // NEW UPDATED Tasks page with two-card layout
@@ -43,6 +50,7 @@ export default function TasksUpdated() {
     title: "",
     description: "",
     dueDate: format(new Date(), "yyyy-MM-dd"),
+    priority: "medium",
   });
   
   // Collapsible state for cards - start expanded
@@ -156,6 +164,7 @@ export default function TasksUpdated() {
         title: "",
         description: "",
         dueDate: format(new Date(), "yyyy-MM-dd"),
+        priority: "medium",
       });
     },
     onError: (error) => {
@@ -211,14 +220,15 @@ export default function TasksUpdated() {
     createTaskMutation.mutate({
       title: newTask.title,
       description: newTask.description,
-      dueDate: newTask.dueDate + 'T00:00:00.000Z',
+      dueDate: newTask.dueDate,
+      priority: newTask.priority,
       completed: false,
     });
   };
   
   const getDueStatus = (dueDate?: string) => {
     if (!dueDate) return { text: "No due date", color: "text-muted-foreground" };
-    
+
     const date = new Date(dueDate);
     const today = new Date();
     
@@ -233,6 +243,27 @@ export default function TasksUpdated() {
     } else {
       return { text: `Due: ${format(date, "MMM d")}`, color: "text-muted-foreground" };
     }
+  };
+
+  const priorityBadgeStyles: Record<"critical" | "high" | "medium" | "low", string> = {
+    critical: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+    high: "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-300",
+    medium: "bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-300",
+    low: "bg-slate-100 text-slate-900 dark:bg-slate-900/30 dark:text-slate-300",
+  };
+
+  const renderPriorityBadge = (task: Task) => {
+    const label = task.aiPriorityLabel ?? "medium";
+    const score = typeof task.aiPriorityScore === "number" ? Math.round(task.aiPriorityScore) : "--";
+    return (
+      <Badge
+        key={`priority-${task.id}`}
+        variant="secondary"
+        className={`text-[10px] font-semibold uppercase tracking-wide ${priorityBadgeStyles[label]}`}
+      >
+        AI {label} · {score}
+      </Badge>
+    );
   };
   
   return (
@@ -289,18 +320,32 @@ export default function TasksUpdated() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="description">Description (Optional)</Label>
-                  <Textarea 
-                    id="description" 
-                    placeholder="Enter task description" 
+                  <Textarea
+                    id="description"
+                    placeholder="Enter task description"
                     value={newTask.description}
                     onChange={e => setNewTask({...newTask, description: e.target.value})}
                   />
                 </div>
                 <div className="grid gap-2">
+                  <Label htmlFor="priority">Priority</Label>
+                  <Select value={newTask.priority} onValueChange={(value) => setNewTask({ ...newTask, priority: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select priority" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="critical">Critical</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="low">Low</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
                   <Label htmlFor="dueDate">Due Date</Label>
-                  <Input 
-                    id="dueDate" 
-                    type="date" 
+                  <Input
+                    id="dueDate"
+                    type="date"
                     value={newTask.dueDate}
                     onChange={e => setNewTask({...newTask, dueDate: e.target.value})}
                   />
@@ -416,27 +461,69 @@ export default function TasksUpdated() {
                                   onClick={(e) => e.stopPropagation()}
                                 />
                                 <div className="flex-1">
-                                  <label
-                                    htmlFor={`task-${task.id}`}
-                                    className={`block text-sm font-medium ${
-                                      task.completed ? "text-muted-foreground line-through" : "text-foreground"
-                                    }`}
-                                  >
-                                    {task.title}
-                                  </label>
-                                  <span className={`text-xs ${dueStatus.color} mt-1 block`}>
-                                    {task.completed ? "Completed" : dueStatus.text}
-                                  </span>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <label
+                                      htmlFor={`task-${task.id}`}
+                                      className={`text-sm font-medium ${
+                                        task.completed ? "text-muted-foreground line-through" : "text-foreground"
+                                      }`}
+                                    >
+                                      {task.title}
+                                    </label>
+                                    <div className="flex items-center gap-2">
+                                      {renderPriorityBadge(task)}
+                                      <span className={`text-xs ${dueStatus.color}`}>
+                                        {task.completed ? "Completed" : dueStatus.text}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  {task.autoCompletePrompt && !task.completed && (
+                                    <p className="mt-1 text-[11px] text-primary/80 truncate">
+                                      {task.autoCompletePrompt}
+                                    </p>
+                                  )}
                                 </div>
                                 <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                               </div>
-                              {isExpanded && task.description && (
-                                <div className="px-3 pb-3 pt-0 border-t">
-                                  <p className={`text-xs mt-2 ${
-                                    task.completed ? "text-muted-foreground" : "text-muted-foreground"
-                                  }`}>
-                                    {task.description}
-                                  </p>
+                              {isExpanded && (
+                                <div className="px-3 pb-3 pt-0 border-t space-y-3">
+                                  {task.description && (
+                                    <p className={`text-xs mt-2 ${
+                                      task.completed ? "text-muted-foreground" : "text-muted-foreground"
+                                    }`}>
+                                      {task.description}
+                                    </p>
+                                  )}
+                                  {task.aiPriorityRationale && (
+                                    <p className="text-xs text-muted-foreground">{task.aiPriorityRationale}</p>
+                                  )}
+                                  {task.autoCompletePrompt && !task.completed && (
+                                    <div className="rounded-md border border-dashed border-primary/40 bg-primary/5 p-3">
+                                      <p className="text-[11px] font-semibold uppercase tracking-wide text-primary mb-1">Auto-complete suggestion</p>
+                                      <p className="text-xs text-muted-foreground">{task.autoCompletePrompt}</p>
+                                      <div className="mt-2 flex gap-2">
+                                        <Button
+                                          size="sm"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleTaskToggle(task, true);
+                                          }}
+                                        >
+                                          Complete task
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleTaskExpansion(task.id);
+                                          }}
+                                        >
+                                          Later
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Filter } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,11 +28,17 @@ import {
 interface Task {
   id: number;
   title: string;
-  description?: string;
-  dueDate?: string;
+  description?: string | null;
+  dueDate?: string | null;
   completed: boolean;
-  clientId?: number;
-  clientName?: string;
+  clientId?: number | null;
+  clientName?: string | null;
+  priority?: string | null;
+  aiPriorityScore?: number;
+  aiPriorityLabel?: "critical" | "high" | "medium" | "low";
+  aiPriorityRationale?: string;
+  autoCompletePrompt?: string | null;
+  autoCompleteSource?: "order" | "appointment" | null;
 }
 
 interface Client {
@@ -54,6 +61,7 @@ function ClientTasks({ clientId }: ClientTasksProps) {
     description: "",
     dueDate: format(new Date(), "yyyy-MM-dd"),
     clientId: "",
+    priority: "medium",
   });
   
   const queryClient = useQueryClient();
@@ -173,6 +181,7 @@ function ClientTasks({ clientId }: ClientTasksProps) {
         description: "",
         dueDate: format(new Date(), "yyyy-MM-dd"),
         clientId: isAllTasks ? "" : (effectiveClientId?.toString() || ""),
+        priority: "medium",
       });
     },
     onError: (error) => {
@@ -212,8 +221,9 @@ function ClientTasks({ clientId }: ClientTasksProps) {
     createTaskMutation.mutate({
       title: newTask.title,
       description: newTask.description,
-      dueDate: newTask.dueDate + 'T00:00:00.000Z',
+      dueDate: newTask.dueDate,
       clientId: newTask.clientId ? parseInt(newTask.clientId) : null,
+      priority: newTask.priority,
       completed: false,
     });
   };
@@ -268,9 +278,9 @@ function ClientTasks({ clientId }: ClientTasksProps) {
 
   const getDueStatus = (dueDate?: string) => {
     if (!dueDate) return { text: "No due date", color: "text-muted-foreground" };
-    
+
     const date = new Date(dueDate);
-    
+
     if (isToday(date)) {
       return { text: "Due today", color: "text-amber-600" };
     } else if (isYesterday(date)) {
@@ -282,6 +292,27 @@ function ClientTasks({ clientId }: ClientTasksProps) {
     } else {
       return { text: `Due: ${format(date, "MMM d")}`, color: "text-muted-foreground" };
     }
+  };
+
+  const priorityBadgeStyles: Record<"critical" | "high" | "medium" | "low", string> = {
+    critical: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+    high: "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-300",
+    medium: "bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-300",
+    low: "bg-slate-100 text-slate-900 dark:bg-slate-900/30 dark:text-slate-300",
+  };
+
+  const renderPriorityBadge = (task: Task) => {
+    const label = task.aiPriorityLabel ?? "medium";
+    const score = typeof task.aiPriorityScore === "number" ? Math.round(task.aiPriorityScore) : "--";
+    return (
+      <Badge
+        key={`priority-${task.id}`}
+        variant="secondary"
+        className={`text-[10px] font-semibold uppercase tracking-wide ${priorityBadgeStyles[label]}`}
+      >
+        AI {label} · {score}
+      </Badge>
+    );
   };
 
   const handleBackClick = () => {
@@ -359,10 +390,24 @@ function ClientTasks({ clientId }: ClientTasksProps) {
                   </div>
                 )}
                 <div className="grid gap-2">
+                  <Label htmlFor="priority">Priority</Label>
+                  <Select value={newTask.priority} onValueChange={(value) => setNewTask({ ...newTask, priority: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select priority" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="critical">Critical</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="low">Low</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
                   <Label htmlFor="dueDate">Due Date</Label>
-                  <Input 
-                    id="dueDate" 
-                    type="date" 
+                  <Input
+                    id="dueDate"
+                    type="date"
                     value={newTask.dueDate}
                     onChange={e => setNewTask({...newTask, dueDate: e.target.value})}
                   />
@@ -496,13 +541,14 @@ function ClientTasks({ clientId }: ClientTasksProps) {
                                       {task.title}
                                     </span>
                                     <div className="flex items-center space-x-2">
+                                      {renderPriorityBadge(task)}
                                       <span className={`text-xs ${dueStatus.color}`}>
                                         {task.completed ? "Completed" : dueStatus.text}
                                       </span>
-                                      <svg 
-                                        className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
-                                        fill="none" 
-                                        viewBox="0 0 24 24" 
+                                      <svg
+                                        className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                                        fill="none"
+                                        viewBox="0 0 24 24"
                                         stroke="currentColor"
                                       >
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -525,7 +571,14 @@ function ClientTasks({ clientId }: ClientTasksProps) {
                                       </p>
                                     </div>
                                   )}
-                                  
+
+                                  {task.aiPriorityRationale && (
+                                    <div className="mt-3">
+                                      <p className="text-xs font-medium text-foreground mb-1">AI Insights:</p>
+                                      <p className="text-xs text-muted-foreground">{task.aiPriorityRationale}</p>
+                                    </div>
+                                  )}
+
                                   {isAllTasks && task.clientName && (
                                     <div className="mt-3">
                                       <p className="text-xs font-medium text-foreground mb-1">Client:</p>
@@ -562,6 +615,33 @@ function ClientTasks({ clientId }: ClientTasksProps) {
                                       </DropdownMenuContent>
                                     </DropdownMenu>
                                   </div>
+                                  {task.autoCompletePrompt && !task.completed && (
+                                    <div className="mt-4 rounded-md border border-dashed border-primary/40 bg-primary/5 p-3">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-primary mb-1">Auto-complete suggestion</p>
+                                      <p className="text-xs text-muted-foreground">{task.autoCompletePrompt}</p>
+                                      <div className="mt-2 flex gap-2">
+                                        <Button
+                                          size="sm"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleTaskToggle(task, true);
+                                          }}
+                                        >
+                                          Complete task
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleTaskExpansion(task.id);
+                                          }}
+                                        >
+                                          Later
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>

@@ -8,6 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Plus, Search, CalendarDays, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, CheckSquare } from "lucide-react";
 import {
   DropdownMenu,
@@ -31,23 +39,54 @@ import { format, isToday, isAfter, isBefore, isYesterday, addDays } from "date-f
 interface Task {
   id: number;
   title: string;
-  description?: string;
-  dueDate?: string;
+  description?: string | null;
+  dueDate?: string | null;
   completed: boolean;
-  clientId?: number;
-  prospectId?: number;
+  clientId?: number | null;
+  prospectId?: number | null;
+  priority?: string | null;
+  aiPriorityScore?: number;
+  aiPriorityLabel?: "critical" | "high" | "medium" | "low";
+  aiPriorityRationale?: string;
+  autoCompletePrompt?: string | null;
+  autoCompleteSource?: "order" | "appointment" | null;
+  autoCompleteContext?: Record<string, unknown> | null;
 }
+
+type NewTaskDraft = {
+  title: string;
+  description: string;
+  dueDate: string;
+  priority: string;
+  clientId?: number | null;
+};
+
+type InterpretationSummary = {
+  confidence: number;
+  entities: {
+    intents: string[];
+    dueDatePhrase?: string;
+    priority?: string | null;
+    clientName?: string | null;
+  };
+};
 
 // Updated Tasks page with two-card layout
 export default function Tasks() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
-  const [newTask, setNewTask] = useState({
+  const [newTask, setNewTask] = useState<NewTaskDraft>({
     title: "",
     description: "",
     dueDate: format(new Date(), "yyyy-MM-dd"),
+    priority: "medium",
+    clientId: undefined,
   });
+  const [nlInput, setNlInput] = useState("");
+  const [isInterpreting, setIsInterpreting] = useState(false);
+  const [interpretationResult, setInterpretationResult] = useState<InterpretationSummary | null>(null);
+  const [interpretError, setInterpretError] = useState<string | null>(null);
   
   // Collapse states for cards
   const [tasksCollapsed, setTasksCollapsed] = useState(false);
@@ -90,7 +129,12 @@ export default function Tasks() {
         title: "",
         description: "",
         dueDate: format(new Date(), "yyyy-MM-dd"),
+        priority: "medium",
+        clientId: undefined,
       });
+      setNlInput("");
+      setInterpretationResult(null);
+      setInterpretError(null);
       toast({
         title: "Success",
         description: "Task created successfully",
@@ -181,9 +225,40 @@ export default function Tasks() {
     });
   };
 
+  const handleInterpretInput = async () => {
+    if (!nlInput.trim()) {
+      setInterpretError("Describe the task so we can suggest details.");
+      return;
+    }
+
+    setIsInterpreting(true);
+    setInterpretError(null);
+
+    try {
+      const response = await apiRequest("POST", "/api/tasks/interpret", { input: nlInput });
+      const data = await response.json();
+      setInterpretationResult({ confidence: data.confidence, entities: data.entities });
+
+      setNewTask(prev => ({
+        ...prev,
+        title: data.suggestedTask?.title ?? prev.title,
+        description: data.suggestedTask?.description ?? prev.description,
+        dueDate: data.suggestedTask?.dueDate ?? prev.dueDate,
+        priority: data.suggestedTask?.priority ?? prev.priority,
+        clientId: data.suggestedTask?.clientId ?? prev.clientId,
+      }));
+    } catch (error: any) {
+      console.error("Interpret task input error:", error);
+      setInterpretError(error.message || "We couldn't understand that. Try rephrasing with more context.");
+      setInterpretationResult(null);
+    } finally {
+      setIsInterpreting(false);
+    }
+  };
+
   const getDueStatus = (dueDate?: string) => {
     if (!dueDate) return { text: "", color: "text-muted-foreground" };
-    
+
     const due = new Date(dueDate);
     const now = new Date();
     
@@ -200,6 +275,27 @@ export default function Tasks() {
     }
   };
 
+  const priorityBadgeStyles: Record<"critical" | "high" | "medium" | "low", string> = {
+    critical: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+    high: "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-300",
+    medium: "bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-300",
+    low: "bg-slate-100 text-slate-900 dark:bg-slate-900/30 dark:text-slate-300",
+  };
+
+  const renderPriorityBadge = (task: Task) => {
+    const label = task.aiPriorityLabel ?? "medium";
+    const displayScore = typeof task.aiPriorityScore === "number" ? Math.round(task.aiPriorityScore) : "--";
+    return (
+      <Badge
+        key={`${task.id}-ai-priority`}
+        variant="secondary"
+        className={`text-[10px] font-semibold uppercase tracking-wide ${priorityBadgeStyles[label]}`}
+      >
+        AI {label} · {displayScore}
+      </Badge>
+    );
+  };
+
   // Helper function to get client name by ID
   const getClientName = (clientId?: number) => {
     if (!clientId || !clients) return null;
@@ -210,6 +306,14 @@ export default function Tasks() {
   useEffect(() => {
     console.log("NEW UPDATED TASKS PAGE LOADED SUCCESSFULLY");
   }, []);
+
+  useEffect(() => {
+    if (!isNewTaskDialogOpen) {
+      setNlInput("");
+      setInterpretationResult(null);
+      setInterpretError(null);
+    }
+  }, [isNewTaskDialogOpen]);
 
   return (
     <div className="tasks-page-container min-h-screen p-6" style={{ backgroundColor: 'hsl(222, 84%, 5%)' }}>
@@ -233,6 +337,44 @@ export default function Tasks() {
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="nl-input">Smart capture</Label>
+                <Textarea
+                  id="nl-input"
+                  value={nlInput}
+                  onChange={(e) => setNlInput(e.target.value)}
+                  placeholder="E.g. Call Rohan tomorrow to confirm SIP top-up"
+                  rows={3}
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>
+                    {interpretationResult
+                      ? `Confidence ${Math.round(interpretationResult.confidence * 100)}%${interpretationResult.entities.intents.length > 0 ? ` · ${interpretationResult.entities.intents.join(', ')}` : ''}`
+                      : "Describe what needs to be done and let AI prefill the form."}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleInterpretInput}
+                    disabled={isInterpreting}
+                  >
+                    {isInterpreting ? "Interpreting..." : "Prefill with AI"}
+                  </Button>
+                </div>
+                {interpretationResult && (
+                  <p className="text-xs text-primary/80">
+                    {[interpretationResult.entities.clientName ? `Client: ${interpretationResult.entities.clientName}` : null,
+                      interpretationResult.entities.dueDatePhrase ? `Due ${interpretationResult.entities.dueDatePhrase}` : null,
+                      interpretationResult.entities.priority ? `Priority ${interpretationResult.entities.priority}` : null]
+                      .filter(Boolean)
+                      .join(" • ")}
+                  </p>
+                )}
+                {interpretError && (
+                  <p className="text-xs text-destructive">{interpretError}</p>
+                )}
+              </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="title" className="text-right">
                   Title
@@ -269,6 +411,49 @@ export default function Tasks() {
                   onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
                   className="col-span-3"
                 />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="priority" className="text-right">
+                  Priority
+                </Label>
+                <Select
+                  value={newTask.priority}
+                  onValueChange={(value) => setNewTask({ ...newTask, priority: value })}
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select priority" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="critical">Critical</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="low">Low</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="client" className="text-right">
+                  Client
+                </Label>
+                <Select
+                  value={newTask.clientId ? String(newTask.clientId) : ""}
+                  onValueChange={(value) => setNewTask({
+                    ...newTask,
+                    clientId: value ? Number(value) : undefined,
+                  })}
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Unassigned" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Unassigned</SelectItem>
+                    {Array.isArray(clients) && clients.map((client: any) => (
+                      <SelectItem key={client.id} value={String(client.id)}>
+                        {client.fullName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <DialogFooter>
@@ -370,6 +555,7 @@ export default function Tasks() {
                                       {task.title}
                                     </div>
                                     <div className="flex items-center space-x-2">
+                                      {renderPriorityBadge(task)}
                                       {task.dueDate && (
                                         <span className={`text-xs px-2 py-1 rounded-full ${dueStatus.color} bg-muted/50`}>
                                           {dueStatus.text}
@@ -389,9 +575,14 @@ export default function Tasks() {
                                       {task.description}
                                     </p>
                                   )}
+                                  {!isExpanded && task.autoCompletePrompt && !task.completed && (
+                                    <p className="mt-1 text-[11px] text-primary/80 truncate">
+                                      {task.autoCompletePrompt}
+                                    </p>
+                                  )}
                                 </div>
                               </div>
-                              
+
                               {isExpanded && (
                                 <div className="px-3 pb-3 border-t border-border/50 mt-2 pt-3">
                                   {task.description && (
@@ -410,6 +601,14 @@ export default function Tasks() {
                                       </p>
                                     </div>
                                   )}
+                                  {task.aiPriorityRationale && (
+                                    <div className="mb-3">
+                                      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">AI Insights</h4>
+                                      <p className="text-sm text-muted-foreground">
+                                        {task.aiPriorityRationale}
+                                      </p>
+                                    </div>
+                                  )}
                                   {(task.clientId || task.prospectId) && (
                                     <div className="mb-3">
                                       <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Related To</h4>
@@ -424,8 +623,8 @@ export default function Tasks() {
                                   )}
                                   <div className="flex items-center justify-between pt-2">
                                     <span className={`text-xs px-2 py-1 rounded-full ${
-                                      task.completed 
-                                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' 
+                                      task.completed
+                                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
                                         : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
                                     }`}>
                                       {task.completed ? 'Completed' : 'Pending'}
@@ -441,6 +640,39 @@ export default function Tasks() {
                                       {task.completed ? 'Mark Incomplete' : 'Mark Complete'}
                                     </Button>
                                   </div>
+                                  {task.autoCompletePrompt && !task.completed && (
+                                    <div className="mt-4 rounded-md border border-dashed border-primary/40 bg-primary/5 p-3">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-primary mb-1">Auto-complete suggestion</p>
+                                      <p className="text-sm text-muted-foreground">
+                                        {task.autoCompletePrompt}
+                                      </p>
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        <Button
+                                          size="sm"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleTaskToggle(task, true);
+                                          }}
+                                        >
+                                          Complete task
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setExpandedTasks(prev => {
+                                              const next = new Set(prev);
+                                              next.delete(task.id);
+                                              return next;
+                                            });
+                                          }}
+                                        >
+                                          Later
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
