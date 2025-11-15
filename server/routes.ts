@@ -21,6 +21,8 @@ import * as goalRoutes from "./routes/goals";
 import * as automationRoutes from "./routes/automation";
 import { triggerWebhooks } from "./services/webhook-service";
 import { TaskAlertHubService } from "./services/task-alert-hub-service";
+import { enrichTasksWithIntelligence } from "./services/task-intelligence-service";
+import { interpretTaskInput } from "./services/task-intent-service";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import { z } from "zod";
@@ -1737,21 +1739,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Task routes
   app.get("/api/tasks", authMiddleware, async (req, res) => {
     try {
-      const assignedTo = (req.session as any).userId;
-      const completed = req.query.completed === "true" ? true : 
-                      req.query.completed === "false" ? false : 
+      const sessionUserId = (req.session as any).userId;
+      const parsedUserId = typeof sessionUserId === "number"
+        ? sessionUserId
+        : Number(sessionUserId ?? NaN);
+      const hasValidUser = Number.isFinite(parsedUserId);
+      const completed = req.query.completed === "true" ? true :
+                      req.query.completed === "false" ? false :
                       undefined;
       const clientId = req.query.clientId ? Number(req.query.clientId) : undefined;
-      
+
       if (req.query.clientId && isNaN(clientId!)) {
         return res.status(400).json({ message: "Invalid client ID format" });
       }
-      
-      const tasks = await storage.getTasks(assignedTo, completed, clientId);
-      res.json(tasks);
+
+      const tasks = await storage.getTasks(hasValidUser ? parsedUserId : undefined, completed, clientId);
+      const enrichedTasks = await enrichTasksWithIntelligence(tasks as any[], {
+        userId: hasValidUser ? Number(parsedUserId) : 0,
+        storage,
+      });
+      res.json(enrichedTasks);
     } catch (error) {
       console.error("Get tasks error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/tasks/interpret", authMiddleware, async (req, res) => {
+    try {
+      const schema = z.object({
+        input: z.string().min(1, "Task description is required for interpretation"),
+      });
+      const parseResult = schema.safeParse(req.body);
+
+      if (!parseResult.success) {
+        return res.status(400).json({
+          message: "Invalid task interpretation input",
+          errors: parseResult.error.format(),
+        });
+      }
+
+      const sessionUserId = (req.session as any).userId;
+      const parsedUserId = typeof sessionUserId === "number"
+        ? sessionUserId
+        : Number(sessionUserId ?? NaN);
+
+      if (!Number.isFinite(parsedUserId)) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const result = await interpretTaskInput(parseResult.data.input, storage, parsedUserId);
+      res.json(result);
+    } catch (error) {
+      console.error("Interpret task input error:", error);
+      res.status(500).json({ message: "Failed to interpret task input" });
     }
   });
   
