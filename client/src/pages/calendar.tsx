@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, startOfDay, endOfDay, isSameWeek, startOfToday, addMonths, subMonths, addDays, subDays, isSameDay, isToday, startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek } from 'date-fns';
-import { Calendar as CalendarIcon, Clock, Phone, Video, Users, Search, Plus, ChevronLeft, ChevronRight, List, Calendar as CalendarViewIcon } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Phone, Video, Users, Search, Plus, ChevronLeft, ChevronRight, List, Calendar as CalendarViewIcon, AlertTriangle } from 'lucide-react';
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,6 +14,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { EmptyState } from "@/components/empty-state";
+import {
+  evaluateShowUpLikelihood,
+  generateAgendaTemplate,
+  generateFollowUpTemplate,
+  getSuggestedAppointmentDetails,
+  type AppointmentRecommendation,
+  type ShowUpAssessment,
+} from "@/services/appointment-intelligence";
 
 interface Appointment {
   id: number;
@@ -30,6 +38,13 @@ interface Appointment {
   createdAt: string;
 }
 
+type AppointmentInsight = {
+  showUp: ShowUpAssessment;
+  agendaTemplate: string;
+  followUpTemplate: string;
+  isCompleted: boolean;
+};
+
 export default function CalendarPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
@@ -39,6 +54,13 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isNewAppointmentDialogOpen, setIsNewAppointmentDialogOpen] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
+  const [suggestedDetails, setSuggestedDetails] = useState<AppointmentRecommendation | null>(null);
+  const [lastGeneratedTemplates, setLastGeneratedTemplates] = useState<{
+    appointmentTitle: string;
+    agenda: string;
+    followUp: string;
+    isFollowUp: boolean;
+  } | null>(null);
   const [newAppointment, setNewAppointment] = useState({
     title: '',
     description: '',
@@ -92,6 +114,29 @@ export default function CalendarPage() {
     }
   };
 
+  const handleNewAppointmentDialogOpenChange = (open: boolean) => {
+    if (open) {
+      const recommendation = getSuggestedAppointmentDetails(appointments ?? [], {
+        preferredDate: selectedDate ?? calendarDate,
+      });
+
+      if (recommendation) {
+        setSuggestedDetails(recommendation);
+        setNewAppointment(prev => ({
+          ...prev,
+          date: recommendation.date,
+          startTime: recommendation.startTime,
+          endTime: recommendation.endTime,
+          type: recommendation.type,
+        }));
+      }
+    } else {
+      setSuggestedDetails(null);
+    }
+
+    setIsNewAppointmentDialogOpen(open);
+  };
+
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
     return format(date, 'h:mm a');
@@ -131,11 +176,13 @@ export default function CalendarPage() {
   // Create appointment mutation
   const createAppointmentMutation = useMutation({
     mutationFn: async (appointmentData: any) => {
-      return await apiRequest('POST', '/api/appointments', appointmentData);
+      const response = await apiRequest('POST', '/api/appointments', appointmentData);
+      return await response.json();
     },
-    onSuccess: () => {
+    onSuccess: (createdAppointment: Appointment) => {
       queryClient.invalidateQueries({ queryKey: ['/api/appointments'] });
       setIsNewAppointmentDialogOpen(false);
+      setSuggestedDetails(null);
       setNewAppointment({
         title: '',
         description: '',
@@ -146,6 +193,12 @@ export default function CalendarPage() {
         type: 'meeting',
         priority: 'medium',
         location: ''
+      });
+      setLastGeneratedTemplates({
+        appointmentTitle: createdAppointment?.title ?? 'New appointment',
+        agenda: generateAgendaTemplate(createdAppointment),
+        followUp: generateFollowUpTemplate(createdAppointment),
+        isFollowUp: false,
       });
       toast({
         title: "Success",
@@ -225,7 +278,7 @@ export default function CalendarPage() {
   // Filter and sort appointments
   const filteredAppointments = React.useMemo(() => {
     if (!appointments) return [];
-    
+
     let filtered = appointments.filter((appointment) => {
       const appointmentDate = new Date(appointment.startTime);
       const today = startOfToday();
@@ -258,6 +311,57 @@ export default function CalendarPage() {
     });
   }, [appointments, searchQuery, filterType, filterPriority, selectedView, selectedDate]);
 
+  const appointmentInsights = React.useMemo(() => {
+    if (!appointments) return {} as Record<number, AppointmentInsight>;
+
+    const now = new Date();
+
+    return appointments.reduce<Record<number, AppointmentInsight>>((acc, appointment) => {
+      const showUp = evaluateShowUpLikelihood(appointment);
+
+      acc[appointment.id] = {
+        showUp,
+        agendaTemplate: generateAgendaTemplate(appointment),
+        followUpTemplate: generateFollowUpTemplate(appointment),
+        isCompleted: new Date(appointment.endTime) < now,
+      };
+
+      return acc;
+    }, {});
+  }, [appointments]);
+
+  useEffect(() => {
+    if (!appointments || appointments.length === 0) return;
+
+    const now = new Date();
+    const recentlyCompleted = [...appointments]
+      .filter((appointment) => {
+        const end = new Date(appointment.endTime);
+        const diffInHours = Math.abs((now.getTime() - end.getTime()) / (1000 * 60 * 60));
+        return end < now && diffInHours <= 6;
+      })
+      .sort((a, b) => new Date(b.endTime).getTime() - new Date(a.endTime).getTime());
+
+    if (recentlyCompleted.length === 0) {
+      return;
+    }
+
+    const mostRecent = recentlyCompleted[0];
+
+    setLastGeneratedTemplates((current) => {
+      if (current && current.isFollowUp && current.appointmentTitle === mostRecent.title) {
+        return current;
+      }
+
+      return {
+        appointmentTitle: mostRecent.title,
+        agenda: generateAgendaTemplate(mostRecent),
+        followUp: generateFollowUpTemplate(mostRecent),
+        isFollowUp: true,
+      };
+    });
+  }, [appointments]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background px-4 sm:px-6 md:px-8 lg:px-10 xl:px-12 py-6 sm:py-8 lg:py-10 transition-colors duration-300">
@@ -281,7 +385,7 @@ export default function CalendarPage() {
           <div className="flex items-center justify-between">
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-foreground tracking-tight">Calendar</h1>
             
-            <Dialog open={isNewAppointmentDialogOpen} onOpenChange={setIsNewAppointmentDialogOpen}>
+            <Dialog open={isNewAppointmentDialogOpen} onOpenChange={handleNewAppointmentDialogOpenChange}>
               <DialogTrigger asChild>
                 <Button 
                   size="icon" 
@@ -298,6 +402,18 @@ export default function CalendarPage() {
                   Schedule a new appointment with a client
                 </DialogDescription>
               </DialogHeader>
+              {suggestedDetails && (
+                <div className="rounded-lg border border-primary/40 bg-primary/5 p-4 text-sm text-foreground mb-4">
+                  <p className="font-semibold text-primary mb-1">Recommended slot ready</p>
+                  <p className="mb-1">
+                    {format(new Date(`${suggestedDetails.date}T${suggestedDetails.startTime}:00`), "EEEE, MMMM d 'at' h:mm a")}
+                    {' '}for a {suggestedDetails.type.replace('_', ' ')}.
+                  </p>
+                  <p className="text-muted-foreground">
+                    {suggestedDetails.rationale} Confidence {Math.round(suggestedDetails.confidence * 100)}%.
+                  </p>
+                </div>
+              )}
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="title" className="text-right">
@@ -524,7 +640,36 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 md:px-8 lg:px-10 xl:px-12 py-6 sm:py-8 lg:py-10">
+      <div className="px-4 sm:px-6 md:px-8 lg:px-10 xl:px-12 py-6 sm:py-8 lg:py-10 space-y-6">
+        {lastGeneratedTemplates && (
+          <Card className="border-dashed border-primary/40 bg-primary/5">
+            <CardHeader>
+              <CardTitle className="text-xl">Templates ready for {lastGeneratedTemplates.appointmentTitle}</CardTitle>
+              <CardDescription>
+                {lastGeneratedTemplates.isFollowUp
+                  ? 'We prepared a follow-up message so you can respond quickly after your meeting.'
+                  : 'Use this agenda to kick-start the conversation and keep the follow-up handy for after the meeting.'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              {!lastGeneratedTemplates.isFollowUp && (
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground mb-2">Agenda Template</h3>
+                  <div className="text-sm whitespace-pre-wrap bg-background/70 border border-border/60 rounded-lg p-3">
+                    {lastGeneratedTemplates.agenda}
+                  </div>
+                </div>
+              )}
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-2">Follow-up Template</h3>
+                <div className="text-sm whitespace-pre-wrap bg-background/70 border border-border/60 rounded-lg p-3">
+                  {lastGeneratedTemplates.followUp}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Date Navigation for Day and Month Views */}
         {(selectedView === 'day' || selectedView === 'month') && (
           <div className="flex items-center justify-between mb-6">
@@ -563,9 +708,18 @@ export default function CalendarPage() {
             {filteredAppointments.length > 0 ? (
               filteredAppointments.map((appointment) => {
                 const isExpanded = expandedCards.has(appointment.id);
+                const insights = appointmentInsights[appointment.id];
+                const showUpPercentage = insights ? Math.round(insights.showUp.likelihood * 100) : null;
+                const showUpBadgeVariant = insights
+                  ? insights.showUp.riskLevel === 'high'
+                    ? 'destructive'
+                    : insights.showUp.riskLevel === 'medium'
+                      ? 'secondary'
+                      : 'outline'
+                  : 'outline';
                 return (
-                  <Card 
-                    key={appointment.id} 
+                  <Card
+                    key={appointment.id}
                     className={`border-l-4 ${getAppointmentTypeColor(appointment.type)} bg-card dark:bg-card border-border shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer`}
                     onClick={() => toggleCardExpansion(appointment.id)}
                   >
@@ -577,11 +731,19 @@ export default function CalendarPage() {
                               {getAppointmentTypeIcon(appointment.type)}
                               <h3 className="text-lg font-medium text-foreground dark:text-foreground">{appointment.title}</h3>
                             </div>
-                            <Badge variant="outline" className={`${getPriorityColor(appointment.priority)} shrink-0`}>
-                              {appointment.priority}
-                            </Badge>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {insights && (
+                                <Badge variant={showUpBadgeVariant} className="flex items-center gap-1">
+                                  {insights.showUp.riskLevel === 'high' && <AlertTriangle className="h-3 w-3" />}
+                                  Show-up {showUpPercentage}%
+                                </Badge>
+                              )}
+                              <Badge variant="outline" className={`${getPriorityColor(appointment.priority)} shrink-0`}>
+                                {appointment.priority}
+                              </Badge>
+                            </div>
                           </div>
-                          
+
                           {appointment.description && (
                             <p className="text-sm text-muted-foreground mb-2">{appointment.description}</p>
                           )}
@@ -642,7 +804,7 @@ export default function CalendarPage() {
                                   </div>
                                 </div>
                               </div>
-                              
+
                               {appointment.description && (
                                 <div>
                                   <h4 className="text-sm font-medium text-foreground mb-2">Description</h4>
@@ -651,10 +813,34 @@ export default function CalendarPage() {
                                   </p>
                                 </div>
                               )}
+
+                              {insights && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                  {!insights.isCompleted && (
+                                    <div>
+                                      <h4 className="text-sm font-medium text-foreground mb-2">Agenda Template</h4>
+                                      <div className="text-sm whitespace-pre-wrap bg-muted/30 dark:bg-muted/20 border border-border/60 rounded-lg p-3">
+                                        {insights.agendaTemplate}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <h4 className="text-sm font-medium text-foreground mb-2">Follow-up Template</h4>
+                                    <div className="text-sm whitespace-pre-wrap bg-muted/30 dark:bg-muted/20 border border-border/60 rounded-lg p-3">
+                                      {insights.followUpTemplate}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-2">
+                                      {insights.isCompleted
+                                        ? 'This meeting has wrapped up. Send this follow-up to keep momentum.'
+                                        : 'Keep this follow-up handy for quick outreach once the meeting ends.'}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
-                        
+
                         <div className="ml-4 flex items-center">
                           <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                             {isExpanded ? (
@@ -696,31 +882,55 @@ export default function CalendarPage() {
                   <CardContent>
                     {filteredAppointments.length > 0 ? (
                       <div className="space-y-3">
-                        {filteredAppointments.map((appointment) => (
-                          <div
-                            key={appointment.id}
-                            className={`p-3 rounded-lg border-l-4 ${getAppointmentTypeColor(appointment.type)} bg-card dark:bg-card border-border shadow-sm hover:shadow-md transition-shadow`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                {getAppointmentTypeIcon(appointment.type)}
-                                <h4 className="font-medium text-card-foreground">{appointment.title}</h4>
-                                <Badge variant="outline" className={getPriorityColor(appointment.priority)}>
-                                  {appointment.priority}
-                                </Badge>
+                        {filteredAppointments.map((appointment) => {
+                          const insights = appointmentInsights[appointment.id];
+                          const showUpPercentage = insights ? Math.round(insights.showUp.likelihood * 100) : null;
+                          const showUpBadgeVariant = insights
+                            ? insights.showUp.riskLevel === 'high'
+                              ? 'destructive'
+                              : insights.showUp.riskLevel === 'medium'
+                                ? 'secondary'
+                                : 'outline'
+                            : 'outline';
+
+                          return (
+                            <div
+                              key={appointment.id}
+                              className={`p-3 rounded-lg border-l-4 ${getAppointmentTypeColor(appointment.type)} bg-card dark:bg-card border-border shadow-sm hover:shadow-md transition-shadow`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {getAppointmentTypeIcon(appointment.type)}
+                                  <h4 className="font-medium text-card-foreground">{appointment.title}</h4>
+                                  <Badge variant="outline" className={getPriorityColor(appointment.priority)}>
+                                    {appointment.priority}
+                                  </Badge>
+                                  {insights && (
+                                    <Badge variant={showUpBadgeVariant} className="flex items-center gap-1">
+                                      {insights.showUp.riskLevel === 'high' && <AlertTriangle className="h-3 w-3" />}
+                                      Show-up {showUpPercentage}%
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="text-sm text-foreground font-medium">
+                                  {formatTime(appointment.startTime)} - {formatTime(appointment.endTime)}
+                                </div>
                               </div>
-                              <div className="text-sm text-foreground font-medium">
-                                {formatTime(appointment.startTime)} - {formatTime(appointment.endTime)}
-                              </div>
+                              {appointment.description && (
+                                <p className="text-sm text-muted-foreground mt-1">{appointment.description}</p>
+                              )}
+                              {appointment.clientName && (
+                                <p className="text-sm text-foreground font-medium mt-1">Client: {appointment.clientName}</p>
+                              )}
+                              {insights && insights.showUp.riskLevel === 'high' && (
+                                <p className="text-xs text-destructive mt-2 flex items-center gap-1">
+                                  <AlertTriangle className="h-3 w-3" />
+                                  High no-show risk. Consider adding a confirmation touchpoint.
+                                </p>
+                              )}
                             </div>
-                            {appointment.description && (
-                              <p className="text-sm text-muted-foreground mt-1">{appointment.description}</p>
-                            )}
-                            {appointment.clientName && (
-                              <p className="text-sm text-foreground font-medium mt-1">Client: {appointment.clientName}</p>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <EmptyState
@@ -777,14 +987,23 @@ export default function CalendarPage() {
                         </div>
                         {dayAppointments.length > 0 && (
                           <div className="mt-1 space-y-1">
-                            {dayAppointments.slice(0, 2).map((apt) => (
-                              <div
-                                key={apt.id}
-                                className="text-xs p-1 rounded truncate bg-background text-foreground border border-border shadow-sm font-medium"
-                              >
-                                {apt.title}
-                              </div>
-                            ))}
+                            {dayAppointments.slice(0, 2).map((apt) => {
+                              const insight = appointmentInsights[apt.id];
+                              const showUpPercentage = insight ? Math.round(insight.showUp.likelihood * 100) : null;
+
+                              return (
+                                <div
+                                  key={apt.id}
+                                  className="text-xs p-1 rounded truncate bg-background text-foreground border border-border shadow-sm font-medium flex items-center gap-1"
+                                >
+                                  {insight?.showUp.riskLevel === 'high' && <AlertTriangle className="h-3 w-3 text-destructive" />}
+                                  <span className="truncate">{apt.title}</span>
+                                  {showUpPercentage !== null && (
+                                    <span className="text-muted-foreground">{showUpPercentage}%</span>
+                                  )}
+                                </div>
+                              );
+                            })}
                             {dayAppointments.length > 2 && (
                               <div className="text-xs text-foreground font-medium">
                                 +{dayAppointments.length - 2} more
