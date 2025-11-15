@@ -45,6 +45,14 @@ export interface DashboardBriefingMetric {
   direction?: "up" | "down" | "flat";
 }
 
+export interface AdviceFeedbackSummary {
+  total: number;
+  accepted: number;
+  dismissed: number;
+  adoptionRate: number | null;
+  repeatedDismissals?: Array<{ recommendation: string; count: number }>;
+}
+
 export interface DashboardBriefing {
   summary: string;
   highlights: Array<{ title: string; detail: string }>;
@@ -53,4 +61,6 @@ export interface DashboardBriefing {
   generatedAt: string;
   tone: BriefingTone;
   depth: BriefingDepth;
+  adviceFeedback?: AdviceFeedbackSummary;
+  suppressedActions?: string[];
 }

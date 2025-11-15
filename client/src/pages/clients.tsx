@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,6 +32,12 @@ import {
 } from "lucide-react";
 import { clientApi } from "@/lib/api";
 import { Client } from "@shared/schema";
+import {
+  calculateRelationshipHealth,
+  getRelationshipHealthStatusMeta,
+  type RelationshipHealthRecord,
+  type RelationshipHealthStatusMeta,
+} from "@/utils/relationship-health";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { generateAvatar } from "@/lib/avatarGenerator";
 import { FloatingAddButton } from "@/components/ui/floating-add-button";
@@ -93,6 +99,7 @@ const getTierBadgeColors = (tier: string) => {
 interface ClientCardProps {
   client: Client & { profile_status?: string; incomplete_sections?: string[]; aumValue?: number; investmentHorizon?: string | null };
   onClick: (id: number, section?: string) => void;
+  health?: RelationshipHealthRecord;
 }
 
 function isClientIncomplete(client: any): boolean {
@@ -104,7 +111,7 @@ function isClientIncomplete(client: any): boolean {
   return noFinancials || noHorizon || noNetWorth;
 }
 
-function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [] }: ClientCardProps & { tasks?: any[], appointments?: any[], alerts?: any[] }) {
+function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [], health }: ClientCardProps & { tasks?: any[], appointments?: any[], alerts?: any[], health?: RelationshipHealthRecord }) {
   const tierColors = getTierColor(client.tier);
   const TierIcon = getTierIcon(client.tier);
   const tierBadge = getTierBadgeColors(client.tier);
@@ -174,91 +181,20 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
     }
   };
 
-  // Client health status background colors for indicator bar
-  const getClientHealthBg = (client: Client, tasks: any[] = [], appointments: any[] = [], alerts: any[] = []) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    // Check conditions (same logic as status)
-    const lastContact = client.lastContactDate;
-    const daysSinceContact = lastContact ? 
-      Math.floor((new Date().getTime() - new Date(lastContact).getTime()) / (1000 * 60 * 60 * 24)) : 999;
-    const hasOverdueContact = daysSinceContact > 90;
-    
-    const hasMeetingToday = appointments.some(apt => {
-      const aptDate = new Date(apt.startTime);
-      aptDate.setHours(0, 0, 0, 0);
-      return aptDate.getTime() === today.getTime() && apt.clientId === client.id;
-    });
-    
-    const hasOverdueTasks = tasks.some(task => {
-      if (task.clientId !== client.id) return false;
-      if (task.completed) return false;
-      if (!task.dueDate) return false;
-      
-      const dueDate = new Date(task.dueDate);
-      dueDate.setHours(23, 59, 59, 999);
-      return dueDate < new Date();
-    });
-    
-    const hasComplaints = alerts.some(alert => 
-      alert.clientId === client.id && 
-      alert.severity === 'high' && 
-      alert.title?.toLowerCase().includes('complaint')
-    );
-    
-    // Return appropriate colors
-    if (hasMeetingToday) return 'bg-blue-500';
-    if (hasComplaints) return 'bg-red-500';
-    if (hasOverdueTasks) return 'bg-primary';
-    if (hasOverdueContact) return 'bg-yellow-500';
-    
-    return 'bg-green-500'; // On Track
+  const HEALTH_TONE_STYLES: Record<RelationshipHealthStatusMeta["tone"], { text: string; bar: string }> = {
+    positive: { text: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-500" },
+    neutral: { text: "text-sky-600 dark:text-sky-400", bar: "bg-sky-500" },
+    caution: { text: "text-amber-600 dark:text-amber-400", bar: "bg-amber-500" },
+    critical: { text: "text-red-600 dark:text-red-400", bar: "bg-red-500" },
   };
 
-  const getClientHealthStatus = (client: Client, tasks: any[] = [], appointments: any[] = [], alerts: any[] = []) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    // Check all conditions
-    const lastContact = client.lastContactDate;
-    const daysSinceContact = lastContact ? 
-      Math.floor((new Date().getTime() - new Date(lastContact).getTime()) / (1000 * 60 * 60 * 24)) : 999;
-    const hasOverdueContact = daysSinceContact > 90;
-    
-    const hasMeetingToday = appointments.some(apt => {
-      const aptDate = new Date(apt.startTime);
-      aptDate.setHours(0, 0, 0, 0);
-      return aptDate.getTime() === today.getTime() && apt.clientId === client.id;
-    });
-    
-    const hasOverdueTasks = tasks.some(task => {
-      if (task.clientId !== client.id) return false;
-      if (task.completed) return false;
-      if (!task.dueDate) return false;
-      
-      const dueDate = new Date(task.dueDate);
-      dueDate.setHours(23, 59, 59, 999);
-      return dueDate < new Date();
-    });
-    
-    const hasComplaints = alerts.some(alert => 
-      alert.clientId === client.id && 
-      alert.severity === 'high' && 
-      alert.title?.toLowerCase().includes('complaint')
-    );
-    
-    // Return specific status messages
-    if (hasMeetingToday) return 'Meeting Today';
-    if (hasComplaints) return 'Complaint';
-    if (hasOverdueTasks) return 'Overdue Tasks';
-    if (hasOverdueContact) return 'Contact Overdue';
-    
-    return 'On Track';
-  };
+  const DEFAULT_HEALTH_STYLE = { text: "text-foreground", bar: "bg-muted-foreground/50" };
 
-
-  
+  const healthMeta = health ? getRelationshipHealthStatusMeta(health.status) : undefined;
+  const toneStyle = healthMeta ? HEALTH_TONE_STYLES[healthMeta.tone] : DEFAULT_HEALTH_STYLE;
+  const healthScore = health ? Math.max(6, Math.min(health.score, 100)) : 0;
+  const healthNarrative = health?.recommendedFocus ?? health?.risks[0] ?? health?.strengths[0];
+  const highlightAsFocus = Boolean(health?.recommendedFocus || (health?.risks && health.risks.length > 0));
   // Format performance value with sign and color
   const formatPerformance = (performance: number | null | undefined) => {
     if (performance === null || performance === undefined) {
@@ -447,11 +383,24 @@ function ClientCard({ client, onClick, tasks = [], appointments = [], alerts = [
               <div className={`h-1.5 w-full rounded-full mt-2 ${getRiskProfileBg(client.riskProfile)} shadow-sm`}></div>
             </div>
             
-            {/* Client Status/Health Indicator */}
+            {/* Client Relationship Health */}
             <div className="p-3 bg-card/60 rounded-lg hover:bg-card transition-all duration-200 shadow-sm hover:shadow-md border border-border/20">
-              <div className="text-xs text-muted-foreground mb-1 font-medium">Status</div>
-              <div className="text-sm font-medium text-foreground">{getClientHealthStatus(client, tasks, appointments, alerts)}</div>
-              <div className={`h-1.5 w-full rounded-full mt-2 ${getClientHealthBg(client, tasks, appointments, alerts)} shadow-sm`}></div>
+              <div className="text-xs text-muted-foreground mb-1 font-medium">Relationship Health</div>
+              <div className="flex items-center justify-between text-sm font-medium">
+                <span className={toneStyle.text}>{health?.statusLabel ?? 'Assessing'}</span>
+                <span className="text-xs text-muted-foreground">{health ? `${health.score}/100` : '—'}</span>
+              </div>
+              <div className="mt-2 h-1.5 w-full rounded-full bg-muted overflow-hidden shadow-sm">
+                <div
+                  className={`h-full transition-all duration-500 ${toneStyle.bar}`}
+                  style={{ width: `${health ? healthScore : 0}%` }}
+                ></div>
+              </div>
+              {healthNarrative && (
+                <div className="mt-2 text-[11px] text-muted-foreground">
+                  {highlightAsFocus ? `Focus: ${healthNarrative}` : `Strength: ${healthNarrative}`}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -496,26 +445,44 @@ export default function Clients() {
   }, []);
   
   // Use the clientApi service to fetch clients data
-  const { data: clients, isLoading } = useQuery({
+  const { data: clients, isLoading } = useQuery<Client[]>({
     queryKey: ['clients'],
     queryFn: () => clientApi.getClients(),
   });
 
   // Fetch additional data for health status calculations
-  const { data: tasks = [] } = useQuery({
+  const { data: tasks = [] } = useQuery<any[]>({
     queryKey: ['tasks'],
     queryFn: () => fetch('/api/tasks').then(res => res.json()),
   });
 
-  const { data: appointments = [] } = useQuery({
+  const { data: appointments = [] } = useQuery<any[]>({
     queryKey: ['appointments'],
     queryFn: () => fetch('/api/appointments').then(res => res.json()),
   });
 
-  const { data: alerts = [] } = useQuery({
+  const { data: alerts = [] } = useQuery<any[]>({
     queryKey: ['portfolio-alerts'],
     queryFn: () => fetch('/api/portfolio-alerts').then(res => res.json()),
   });
+
+  const healthMap = useMemo(() => {
+    if (!Array.isArray(clients)) {
+      return new Map<number, RelationshipHealthRecord>();
+    }
+
+    const map = new Map<number, RelationshipHealthRecord>();
+    clients.forEach((client: any) => {
+      if (!client || typeof client.id !== 'number') return;
+      const record = calculateRelationshipHealth(client, {
+        tasks,
+        appointments,
+        alerts,
+      });
+      map.set(client.id, record);
+    });
+    return map;
+  }, [clients, tasks, appointments, alerts]);
   
   // Calculate active filters
   useEffect(() => {
@@ -584,24 +551,31 @@ export default function Clients() {
             const rb = recentMap[String(b.id)] || 0;
             if (rb !== ra) return rb - ra;
           }
-          // Check if clients need attention based on various factors
           const today = new Date();
-          const daysSinceLastContact = a.lastContactDate 
+          const daysSinceLastContact = a.lastContactDate
             ? Math.floor((today.getTime() - new Date(a.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
             : 999;
-          const daysSinceLastContactB = b.lastContactDate 
+          const daysSinceLastContactB = b.lastContactDate
             ? Math.floor((today.getTime() - new Date(b.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
             : 999;
-          
-          // Determine attention needed: >90 days since contact, or has alerts
-          const aNeedsAttention = daysSinceLastContact > 90 || (a.alertCount && a.alertCount > 0);
-          const bNeedsAttention = daysSinceLastContactB > 90 || (b.alertCount && b.alertCount > 0);
-          
-          // First, sort by attention needed (attention clients first)
+
+          const healthA = healthMap.get(a.id);
+          const healthB = healthMap.get(b.id);
+
+          const aNeedsAttention = healthA
+            ? healthA.status === 'at-risk' || healthA.status === 'watch'
+            : daysSinceLastContact > 90 || (a.alertCount && a.alertCount > 0);
+          const bNeedsAttention = healthB
+            ? healthB.status === 'at-risk' || healthB.status === 'watch'
+            : daysSinceLastContactB > 90 || (b.alertCount && b.alertCount > 0);
+
           if (aNeedsAttention && !bNeedsAttention) return -1;
           if (!aNeedsAttention && bNeedsAttention) return 1;
-          
-          // Within same attention group, sort by AUM (highest first)
+
+          if (healthA && healthB && healthA.score !== healthB.score) {
+            return healthA.score - healthB.score;
+          }
+
           return (b.aumValue || 0) - (a.aumValue || 0);
         })
     : [];
@@ -865,13 +839,14 @@ export default function Clients() {
       ) : filteredClients && filteredClients.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredClients.map((client: Client) => (
-            <ClientCard 
-              key={client.id} 
-              client={client} 
+            <ClientCard
+              key={client.id}
+              client={client}
               onClick={handleClientClick}
               tasks={Array.isArray(tasks) ? tasks : []}
               appointments={Array.isArray(appointments) ? appointments : []}
               alerts={Array.isArray(alerts) ? alerts : []}
+              health={healthMap.get(client.id)}
             />
           ))}
         </div>

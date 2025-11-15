@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useLocation } from "wouter";
 import { useDashboardFilters } from "@/context/dashboard-filter-context";
 import { QuickActionsWorkflow } from "./quick-actions-workflow";
+import {
+  calculateRelationshipHealth,
+  summarizeRelationshipHealth,
+  getRelationshipHealthStatusMeta,
+  type RelationshipHealthRecord,
+  type RelationshipHealthStatusMeta,
+} from "@/utils/relationship-health";
 
 interface RelationshipInsight {
   id: number;
@@ -24,6 +32,11 @@ interface RelationshipInsight {
   milestone?: string;
   hasExpiringKYC?: boolean;
   expiryDate?: string;
+  healthScore: number;
+  healthStatus: RelationshipHealthRecord["status"];
+  healthLabel: string;
+  healthTone: RelationshipHealthStatusMeta["tone"];
+  healthNarrative?: string;
 }
 
 interface RelationshipInsightsProps {
@@ -31,26 +44,71 @@ interface RelationshipInsightsProps {
   maxItems?: number;
 }
 
+const HEALTH_TONE_STYLES: Record<RelationshipHealthStatusMeta["tone"], { badge: string; bar: string; text: string }> = {
+  positive: {
+    badge: "border-emerald-500 text-emerald-600 dark:text-emerald-400",
+    bar: "bg-emerald-500",
+    text: "text-emerald-600 dark:text-emerald-400",
+  },
+  neutral: {
+    badge: "border-sky-500 text-sky-600 dark:text-sky-400",
+    bar: "bg-sky-500",
+    text: "text-sky-600 dark:text-sky-400",
+  },
+  caution: {
+    badge: "border-amber-500 text-amber-600 dark:text-amber-400",
+    bar: "bg-amber-500",
+    text: "text-amber-600 dark:text-amber-400",
+  },
+  critical: {
+    badge: "border-red-500 text-red-600 dark:text-red-400",
+    bar: "bg-red-500",
+    text: "text-red-600 dark:text-red-400",
+  },
+};
+
+const DEFAULT_HEALTH_STYLE = {
+  badge: "border-border text-muted-foreground",
+  bar: "bg-muted-foreground/40",
+  text: "text-foreground",
+};
+
 export function RelationshipInsights({ className, maxItems = 5 }: RelationshipInsightsProps) {
   const [, navigate] = useLocation();
   const { hasFilter } = useDashboardFilters();
   
   // Fetch clients
-  const { data: clients, isLoading: clientsLoading } = useQuery({
+  const { data: clients, isLoading: clientsLoading } = useQuery<any[]>({
     queryKey: ['/api/clients'],
   });
-  
+
   // Fetch appointments for last contact dates
-  const { data: appointments, isLoading: appointmentsLoading } = useQuery({
+  const { data: appointments, isLoading: appointmentsLoading } = useQuery<any[]>({
     queryKey: ['/api/appointments'],
   });
-  
-  // Fetch business metrics for AUM data
-  const { data: businessMetrics, isLoading: metricsLoading } = useQuery({
-    queryKey: ['/api/business-metrics/1'],
+
+  const { data: tasks = [], isLoading: tasksLoading } = useQuery<any[]>({
+    queryKey: ['/api/tasks'],
+    queryFn: () => fetch('/api/tasks').then((res) => res.json()),
   });
 
-  const isLoading = clientsLoading || appointmentsLoading || metricsLoading;
+  const { data: alerts = [], isLoading: alertsLoading } = useQuery<any[]>({
+    queryKey: ['/api/portfolio-alerts'],
+    queryFn: () => fetch('/api/portfolio-alerts').then((res) => res.json()),
+  });
+
+  const isLoading = clientsLoading || appointmentsLoading || tasksLoading || alertsLoading;
+
+  const healthRecords = useMemo<RelationshipHealthRecord[]>(() => {
+    const safeClients = Array.isArray(clients) ? clients : [];
+    return safeClients.map((client: any) =>
+      calculateRelationshipHealth(client, { tasks, appointments, alerts })
+    );
+  }, [clients, tasks, appointments, alerts]);
+
+  const healthSummary = useMemo(() => summarizeRelationshipHealth(healthRecords), [healthRecords]);
+
+  const healthMap = useMemo(() => new Map(healthRecords.map((record) => [record.clientId, record])), [healthRecords]);
   
   // Helper function to check if KYC is expiring (within 30 days)
   const checkKYCExpiry = (expiryDate: string | null | undefined): boolean => {
@@ -117,7 +175,7 @@ export function RelationshipInsights({ className, maxItems = 5 }: RelationshipIn
     safeClients.forEach((client: any) => {
       const clientId = client.id;
       const clientAppointments = appointmentsByClient[clientId] || [];
-      
+
       // Find most recent appointment
       const lastAppointment = clientAppointments
         .sort((a: any, b: any) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0];
@@ -135,13 +193,21 @@ export function RelationshipInsights({ className, maxItems = 5 }: RelationshipIn
         activityLevel = 'low';
       }
       
+      const health = healthMap.get(clientId);
+
       // Check if needs attention (no contact in 60+ days or low activity)
-      const needsAttention = daysSinceContact > 60 || activityLevel === 'low';
-      
+      const derivedNeedsAttention = daysSinceContact > 60 || activityLevel === 'low';
+      const needsAttention = health
+        ? health.status === 'at-risk' || health.status === 'watch'
+        : derivedNeedsAttention;
+
+      const healthMeta = health ? getRelationshipHealthStatusMeta(health.status) : undefined;
+      const healthNarrative = health?.recommendedFocus ?? health?.risks[0] ?? health?.strengths[0];
+
       // Calculate next review date (90 days from last contact or client since date)
-      const nextReviewDate = lastContactDate 
+      const nextReviewDate = lastContactDate
         ? new Date(new Date(lastContactDate).getTime() + 90 * 24 * 60 * 60 * 1000)
-        : client.clientSince 
+        : client.clientSince
           ? new Date(new Date(client.clientSince).getTime() + 90 * 24 * 60 * 60 * 1000)
           : undefined;
       
@@ -179,7 +245,12 @@ export function RelationshipInsights({ className, maxItems = 5 }: RelationshipIn
         needsAttention,
         milestone,
         hasExpiringKYC,
-        expiryDate: expiryDate || undefined
+        expiryDate: expiryDate || undefined,
+        healthScore: health?.score ?? 60,
+        healthStatus: health?.status ?? 'watch',
+        healthLabel: health?.statusLabel ?? 'Watch',
+        healthTone: healthMeta ? healthMeta.tone : 'neutral',
+        healthNarrative,
       });
     });
 
@@ -213,6 +284,9 @@ export function RelationshipInsights({ className, maxItems = 5 }: RelationshipIn
       .sort((a, b) => {
         if (a.needsAttention !== b.needsAttention) {
           return a.needsAttention ? -1 : 1;
+        }
+        if (a.healthScore !== b.healthScore) {
+          return a.healthScore - b.healthScore;
         }
         if (b.aum !== a.aum) {
           return b.aum - a.aum;
@@ -272,11 +346,35 @@ export function RelationshipInsights({ className, maxItems = 5 }: RelationshipIn
           </div>
         ) : (
           <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-lg border border-border/60 bg-muted/40 p-3">
+                <div className="text-xs text-muted-foreground uppercase tracking-wide">Average Score</div>
+                <div className="text-lg font-semibold text-foreground">{healthSummary.averageScore}</div>
+                <div className="text-[11px] text-muted-foreground">{healthSummary.dominantStatusLabel}</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/40 p-3">
+                <div className="text-xs text-muted-foreground uppercase tracking-wide">At Risk</div>
+                <div className="text-lg font-semibold text-foreground">{healthSummary.distribution['at-risk']}</div>
+                <div className="text-[11px] text-muted-foreground">Watchlist {healthSummary.distribution['watch']}</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/40 p-3">
+                <div className="text-xs text-muted-foreground uppercase tracking-wide">Top Signal</div>
+                <div className="text-sm font-semibold text-foreground">
+                  {healthSummary.risks[0]?.label ?? 'Engagement steady'}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {healthSummary.risks[0] ? `${healthSummary.risks[0].count} clients impacted` : 'Maintain momentum'}
+                </div>
+              </div>
+            </div>
+
             {insights.map((insight) => {
               const daysSinceContact = insight.lastContactDate
                 ? Math.floor((Date.now() - new Date(insight.lastContactDate).getTime()) / (1000 * 60 * 60 * 24))
                 : null;
-              
+              const toneStyles = HEALTH_TONE_STYLES[insight.healthTone] ?? DEFAULT_HEALTH_STYLE;
+              const healthWidth = Math.max(6, Math.min(Math.round(insight.healthScore), 100));
+
               return (
                 <div
                   key={insight.id}
@@ -297,6 +395,12 @@ export function RelationshipInsights({ className, maxItems = 5 }: RelationshipIn
                         <Badge className={cn("text-xs", getActivityColor(insight.activityLevel))}>
                           <Activity className="h-3 w-3 mr-1" />
                           {insight.activityLevel.charAt(0).toUpperCase() + insight.activityLevel.slice(1)} Activity
+                        </Badge>
+                        <Badge
+                          variant="outline"
+                          className={cn("text-xs", toneStyles.badge)}
+                        >
+                          Health {Math.round(insight.healthScore)}
                         </Badge>
                         {insight.needsAttention && (
                           <Badge variant="outline" className="text-xs border-yellow-500 text-yellow-600">
@@ -321,15 +425,25 @@ export function RelationshipInsights({ className, maxItems = 5 }: RelationshipIn
                             </span>
                           </div>
                         )}
+                        <div className="col-span-2">
+                          <span className="text-muted-foreground text-xs">Health</span>
+                          <div className="flex items-center justify-between text-xs font-medium">
+                            <span className={toneStyles.text}>{insight.healthLabel}</span>
+                            <span className="text-muted-foreground">{Math.round(insight.healthScore)} / 100</span>
+                          </div>
+                          <div className="mt-1 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                            <div className={cn("h-full", toneStyles.bar)} style={{ width: `${healthWidth}%` }}></div>
+                          </div>
+                        </div>
                       </div>
-                      
+
                       <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                         {daysSinceContact !== null && (
                           <span className="flex items-center gap-1">
                             <MessageSquare className="h-3 w-3" />
-                            {daysSinceContact === 0 
-                              ? 'Contacted today' 
-                              : daysSinceContact === 1 
+                            {daysSinceContact === 0
+                              ? 'Contacted today'
+                              : daysSinceContact === 1
                                 ? 'Contacted yesterday'
                                 : `${daysSinceContact} days ago`
                             }
@@ -339,6 +453,12 @@ export function RelationshipInsights({ className, maxItems = 5 }: RelationshipIn
                           <span className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
                             Review: {format(new Date(insight.nextReviewDate), "MMM dd")}
+                          </span>
+                        )}
+                        {insight.healthNarrative && (
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            <Heart className="h-3 w-3" />
+                            {insight.healthNarrative}
                           </span>
                         )}
                         {insight.milestone && (

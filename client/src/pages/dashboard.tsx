@@ -11,6 +11,7 @@ import { GoalsVsActualsRibbon } from "@/components/dashboard/goals-vs-actuals-ri
 import { TodaysBriefingTimeline } from "@/components/dashboard/todays-briefing-timeline";
 import { OpportunityHighlights } from "@/components/dashboard/opportunity-highlights";
 import { RelationshipInsights } from "@/components/dashboard/relationship-insights";
+import { CoachingNudgesCard } from "@/components/dashboard/coaching-nudges-card";
 import { ScenarioToggles } from "@/components/dashboard/scenario-toggles";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { FadeIn, PageTransition } from "@/components/animations";
@@ -75,7 +76,15 @@ export default function Dashboard() {
   });
 
   // Show skeleton loading until all critical data is loaded
-  const isLoading = businessMetricsLoading || performanceLoading || actionItemsLoading || briefingLoading;
+  const isLoading =
+    businessMetricsLoading ||
+    performanceLoading ||
+    actionItemsLoading ||
+    briefingLoading ||
+    appointmentsLoading ||
+    alertsLoading ||
+    prospectsLoading ||
+    clientsLoading;
 
   const firstName = useMemo(() => user?.fullName.split(' ')[0] ?? 'there', [user?.fullName]);
   const greetingLine = useMemo(() => {
@@ -104,9 +113,6 @@ export default function Dashboard() {
     refetchBriefing();
     refetchActionItems();
   };
-  const isLoading = businessMetricsLoading || tasksLoading || talkingPointsLoading || 
-    announcementsLoading || performanceLoading || appointmentsLoading || alertsLoading || 
-    prospectsLoading || clientsLoading;
   
   if (isLoading) {
     return (
@@ -179,8 +185,8 @@ export default function Dashboard() {
             />
           </div>
 
-        {/* Enhanced Responsive Grid Layout with Better Spacing */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8 xl:gap-10">
+          {/* Enhanced Responsive Grid Layout with Better Spacing */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8 xl:gap-10">
           {/* Action Items Section - Optimized proportions with enhanced animation */}
           <div className="lg:col-span-5 xl:col-span-4 animate-in slide-in-from-left-4 duration-700 delay-300">
             <div className="transition-all duration-300 hover:scale-[1.02] hover:shadow-lg">
@@ -212,6 +218,10 @@ export default function Dashboard() {
             </div>
           </FadeIn>
 
+          <FadeIn direction="up" delay={320} duration={500}>
+            <CoachingNudgesCard />
+          </FadeIn>
+
           {/* 4. Market Insights & Updates - Secondary information */}
           <FadeIn direction="up" delay={400} duration={500}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -233,6 +243,7 @@ export default function Dashboard() {
           <div className="pb-8 sm:pb-12 lg:pb-16"></div>
         </div>
       </div>
-    </PageTransition>
+    </div>
+  </PageTransition>
   );
 }
