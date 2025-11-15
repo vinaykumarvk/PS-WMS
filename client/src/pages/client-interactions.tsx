@@ -48,11 +48,11 @@ interface InteractionSummaryResponse {
 
 export default function ClientInteractionsPage() {
   const [clientId, setClientId] = useState<number | null>(null);
-  
+
   // Set page title
   useEffect(() => {
     document.title = "Client Interactions | Wealth RM";
-    
+
     // Get client ID from URL
     const hash = window.location.hash;
     const match = hash.match(/\/clients\/(\d+)\/interactions/);
@@ -60,13 +60,14 @@ export default function ClientInteractionsPage() {
       setClientId(Number(match[1]));
     }
   }, []);
-  
+
   // Fetch client data
   const { data: client, isLoading } = useQuery({
     queryKey: ['client', clientId],
     queryFn: () => clientId ? clientApi.getClient(clientId) : null,
     enabled: !!clientId,
   });
+
   
   const { data: interactionSummary, isLoading: interactionsLoading } = useQuery<InteractionSummaryResponse | null>({
     queryKey: ['/api/interactions', clientId],
@@ -117,6 +118,7 @@ export default function ClientInteractionsPage() {
     }
     return { color: 'border-muted', icon: Clock };
   };
+
   
   if (!clientId) {
     return (
@@ -126,7 +128,7 @@ export default function ClientInteractionsPage() {
       </div>
     );
   }
-  
+
   return (
     <div className="px-4 sm:px-6 md:px-8 lg:px-10 xl:px-12 py-6 sm:py-8 lg:py-10">
       <div className="flex items-center gap-2 mb-6">
@@ -142,7 +144,7 @@ export default function ClientInteractionsPage() {
           )}
         </h1>
       </div>
-      
+
       <Card className="mb-6">
         <CardContent className="p-6">
           <div className="flex items-start justify-between mb-4">
@@ -284,7 +286,7 @@ export default function ClientInteractionsPage() {
           </div>
         </CardContent>
       </Card>
-      
+
       <Card className="mb-6">
         <CardContent className="p-6">
           <h2 className="text-lg font-medium mb-4">Recent Interactions</h2>
@@ -347,6 +349,7 @@ export default function ClientInteractionsPage() {
           </div>
         </CardContent>
       </Card>
+
       
       <Card>
         <CardContent className="p-6">
