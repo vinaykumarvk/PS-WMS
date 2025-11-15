@@ -185,6 +185,8 @@ export const tasks = pgTable("tasks", {
   dueDate: timestamp("due_date"),
   completed: boolean("completed").default(false),
   priority: text("priority").default("medium"), // low, medium, high
+  urgency: text("urgency"), // now, next, scheduled (computed field, optional for backward compatibility)
+  category: text("category").default("task"), // task, alert, follow_up, appointment
   clientId: integer("client_id").references(() => clients.id),
   prospectId: integer("prospect_id").references(() => prospects.id),
   assignedTo: integer("assigned_to").references(() => users.id),
@@ -211,6 +213,7 @@ export const appointments = pgTable("appointments", {
   assignedTo: integer("assigned_to").references(() => users.id),
   priority: text("priority").default("medium"), // low, medium, high
   type: text("type").notNull(), // meeting, call, email, other
+  followUpDate: timestamp("follow_up_date"), // For follow-up tracking
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -231,6 +234,7 @@ export const portfolioAlerts = pgTable("portfolio_alerts", {
   severity: text("severity").notNull(), // info, warning, critical
   read: boolean("read").default(false),
   actionRequired: boolean("action_required").default(true),
+  scheduledFor: timestamp("scheduled_for"), // For scheduling alerts
   createdAt: timestamp("created_at").defaultNow(),
 });
 

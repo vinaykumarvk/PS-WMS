@@ -14,6 +14,8 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AccessibilityProvider } from '@/context/AccessibilityContext';
 import { NavigationProvider } from '@/context/navigation-context';
+import { LanguageProvider } from '@/components/i18n/language-provider';
+import { DashboardFilterProvider } from '@/context/dashboard-filter-context';
 
 // Mock fetch globally
 global.fetch = vi.fn();
@@ -70,7 +72,20 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
     
     vi.clearAllMocks();
     localStorage.clear();
-    (global.fetch as any).mockClear();
+    window.scrollTo = vi.fn();
+    (global.fetch as any).mockReset();
+    (global.fetch as any).mockImplementation((url: string) => {
+      if (url.includes('/api/auth/me')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ user: null }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({}),
+      });
+    });
   });
 
   afterEach(() => {
@@ -80,15 +95,19 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
   const renderWithProviders = (component: React.ReactElement) => {
     return render(
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider defaultTheme="light">
-          <TooltipProvider>
-            <AccessibilityProvider>
-              <NavigationProvider>
-                <AuthProvider>{component}</AuthProvider>
-              </NavigationProvider>
-            </AccessibilityProvider>
-          </TooltipProvider>
-        </ThemeProvider>
+        <LanguageProvider>
+          <ThemeProvider defaultTheme="light">
+            <TooltipProvider>
+              <AccessibilityProvider>
+                <NavigationProvider>
+                  <DashboardFilterProvider>
+                    <AuthProvider>{component}</AuthProvider>
+                  </DashboardFilterProvider>
+                </NavigationProvider>
+              </AccessibilityProvider>
+            </TooltipProvider>
+          </ThemeProvider>
+        </LanguageProvider>
       </QueryClientProvider>
     );
   };
@@ -138,7 +157,21 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
 
   describe('TC-AUTH-002: Invalid Credentials', () => {
     it('should display error message on invalid credentials', async () => {
-      (global.fetch as any).mockRejectedValueOnce(new Error('Invalid credentials'));
+      (global.fetch as any).mockImplementation((url: string, options?: RequestInit) => {
+        if (url.includes('/api/auth/me')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ user: null }),
+          });
+        }
+        if (url.includes('/api/auth/login') && options?.method === 'POST') {
+          return Promise.reject(new Error('Invalid credentials'));
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({}),
+        });
+      });
 
       renderWithProviders(<LoginPage />);
 
@@ -213,13 +246,13 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
         expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
       });
 
-      const rememberCheckbox = screen.getByRole('checkbox', { name: /remember/i });
-      // Ensure it's checked - click it to make sure
-      fireEvent.click(rememberCheckbox);
+      const rememberCheckbox = screen.getByRole('checkbox', { name: /remember/i }) as HTMLElement;
+      if (rememberCheckbox.getAttribute('aria-checked') !== 'true') {
+        fireEvent.click(rememberCheckbox);
+      }
       
-      // Wait a bit for state to update
       await waitFor(() => {
-        expect((rememberCheckbox as HTMLInputElement).checked).toBe(true);
+        expect(rememberCheckbox.getAttribute('aria-checked')).toBe('true');
       }, { timeout: 1000 });
 
       const submitButton = screen.getByRole('button', { name: /sign in/i });
@@ -443,15 +476,24 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
         role: 'Question Manager',
       };
 
-      (global.fetch as any)
-        .mockResolvedValueOnce({
+      (global.fetch as any).mockImplementation((url: string, options?: RequestInit) => {
+        if (url.includes('/api/auth/me')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ user: null }),
+          });
+        }
+        if (url.includes('/api/auth/login') && options?.method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ user: mockQMUser }),
+          });
+        }
+        return Promise.resolve({
           ok: true,
-          json: async () => ({ user: mockQMUser }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ user: mockQMUser }),
+          json: async () => ({}),
         });
+      });
 
       renderWithProviders(<LoginPage />);
 
@@ -471,9 +513,23 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
         role: 'RM',
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ user: mockUser }),
+      (global.fetch as any).mockImplementation((url: string, options?: RequestInit) => {
+        if (url.includes('/api/auth/me')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ user: null }),
+          });
+        }
+        if (url.includes('/api/auth/login') && options?.method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ user: mockUser }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({}),
+        });
       });
 
       renderWithProviders(<LoginPage />);
@@ -862,7 +918,7 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByLabelText(/home/i)).toBeInTheDocument();
+        expect(screen.getByLabelText(/dashboard/i)).toBeInTheDocument();
         expect(screen.getByLabelText(/calendar/i)).toBeInTheDocument();
         expect(screen.getByLabelText(/tasks/i)).toBeInTheDocument();
         expect(screen.getByLabelText(/clients/i)).toBeInTheDocument();
@@ -1429,17 +1485,15 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
       );
 
       await waitFor(() => {
-        // Check for Account Settings heading (most specific)
         const accountSettings = screen.queryByText(/account settings/i);
         if (accountSettings) {
           expect(accountSettings).toBeInTheDocument();
           return;
         }
-        // Fallback: check for any settings-related content
-        const profileTab = screen.queryByText(/profile/i);
-        const securityTab = screen.queryByText(/security/i);
-        const notificationsTab = screen.queryByText(/notifications/i);
-        expect(profileTab || securityTab || notificationsTab).toBeTruthy();
+        const profileTabs = screen.queryAllByText(/profile/i);
+        const securityTabs = screen.queryAllByText(/security/i);
+        const notificationsTabs = screen.queryAllByText(/notifications/i);
+        expect(profileTabs.length + securityTabs.length + notificationsTabs.length).toBeGreaterThan(0);
       }, { timeout: 5000 });
     });
   });
@@ -1473,11 +1527,10 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
       );
 
       await waitFor(() => {
-        // Settings page should render - check for Account Settings heading
         const accountSettings = screen.queryByText(/account settings/i);
-        const profileTab = screen.queryByText(/profile/i);
-        const securityTab = screen.queryByText(/security/i);
-        expect(accountSettings || profileTab || securityTab).toBeTruthy();
+        const profileTabs = screen.queryAllByText(/profile/i);
+        const securityTabs = screen.queryAllByText(/security/i);
+        expect(accountSettings || profileTabs.length > 0 || securityTabs.length > 0).toBeTruthy();
       }, { timeout: 5000 });
 
       // Verify settings page has interactive elements (tabs, buttons, inputs)
@@ -1513,7 +1566,9 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
       );
 
       await waitFor(() => {
-        expect(screen.queryByText(/profile/i) || screen.queryByText(mockUser.fullName)).toBeTruthy();
+        const profileMatches = screen.queryAllByText(/profile/i);
+        const nameMatch = screen.queryByText(mockUser.fullName);
+        expect(profileMatches.length > 0 || !!nameMatch).toBeTruthy();
       });
     });
   });
@@ -1539,10 +1594,10 @@ describe('Agent C - Auth & Navigation (25 Test Cases)', () => {
       );
 
       await waitFor(() => {
-        // Profile page should render
-        expect(screen.queryByText(/profile/i) || screen.queryByText(mockUser.fullName)).toBeTruthy();
+        const profileMatches = screen.queryAllByText(/profile/i);
+        const nameMatch = screen.queryByText(mockUser.fullName);
+        expect(profileMatches.length > 0 || !!nameMatch).toBeTruthy();
       });
     });
   });
 });
-

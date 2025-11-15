@@ -7,6 +7,11 @@ import { TalkingPointsCard } from "@/components/dashboard/talking-points-card";
 import { AnnouncementsCard } from "@/components/dashboard/announcements-card";
 import { PerformanceCard } from "@/components/dashboard/performance-card";
 import { BusinessSnapshotStructured } from "@/components/dashboard/business-snapshot-structured";
+import { GoalsVsActualsRibbon } from "@/components/dashboard/goals-vs-actuals-ribbon";
+import { TodaysBriefingTimeline } from "@/components/dashboard/todays-briefing-timeline";
+import { OpportunityHighlights } from "@/components/dashboard/opportunity-highlights";
+import { RelationshipInsights } from "@/components/dashboard/relationship-insights";
+import { ScenarioToggles } from "@/components/dashboard/scenario-toggles";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { FadeIn, PageTransition } from "@/components/animations";
 import {
@@ -52,6 +57,23 @@ export default function Dashboard() {
     queryKey: ['/api/performance']
   });
 
+  // Additional queries for new components
+  const { isLoading: appointmentsLoading } = useQuery({
+    queryKey: ['/api/appointments/today']
+  });
+
+  const { isLoading: alertsLoading } = useQuery({
+    queryKey: ['/api/portfolio-alerts']
+  });
+
+  const { isLoading: prospectsLoading } = useQuery({
+    queryKey: ['/api/prospects']
+  });
+
+  const { isLoading: clientsLoading } = useQuery({
+    queryKey: ['/api/clients']
+  });
+
   // Show skeleton loading until all critical data is loaded
   const isLoading = businessMetricsLoading || performanceLoading || actionItemsLoading || briefingLoading;
 
@@ -82,6 +104,9 @@ export default function Dashboard() {
     refetchBriefing();
     refetchActionItems();
   };
+  const isLoading = businessMetricsLoading || tasksLoading || talkingPointsLoading || 
+    announcementsLoading || performanceLoading || appointmentsLoading || alertsLoading || 
+    prospectsLoading || clientsLoading;
   
   if (isLoading) {
     return (
@@ -162,35 +187,47 @@ export default function Dashboard() {
               <ActionItemsPriorities data={actionItems} isLoading={actionItemsLoading} />
             </div>
           </div>
+          {/* NEW NARRATIVE LAYOUT: RM's Daily Storyline */}
           
-          {/* Market Insights & Updates - Better proportions with staggered animations */}
-          <div className="lg:col-span-7 xl:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
-            <div className="animate-in slide-in-from-right-4 duration-700 delay-400">
-              <div className="transition-all duration-300 hover:scale-[1.02] hover:shadow-lg">
-                <TalkingPointsCard />
-              </div>
-            </div>
-            <div className="animate-in slide-in-from-right-4 duration-700 delay-500">
-              <div className="transition-all duration-300 hover:scale-[1.02] hover:shadow-lg">
-                <AnnouncementsCard />
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        {/* Enhanced Business Snapshot with Animation - Moved below updates */}
-        <div className="animate-in slide-in-from-bottom-4 duration-700 delay-600">
-          <BusinessSnapshotStructured />
-        </div>
-        
-        {/* Performance Section with enhanced spacing */}
-        <div className="animate-in slide-in-from-bottom-4 duration-800 delay-700">
-          <div className="transition-all duration-300 hover:scale-[1.01] hover:shadow-lg">
-            <PerformanceCard />
-          </div>
-        </div>
-        
+          {/* 1. Top Ribbon: Goals vs Actuals */}
+          <FadeIn direction="down" delay={100} duration={500}>
+            <GoalsVsActualsRibbon />
+          </FadeIn>
 
+          {/* Scenario Toggles - Filter dashboard views */}
+          <FadeIn direction="down" delay={150} duration={500}>
+            <ScenarioToggles />
+          </FadeIn>
+
+          {/* 2. Today's Briefing Timeline - Main focus area */}
+          <FadeIn direction="up" delay={200} duration={500}>
+            <TodaysBriefingTimeline />
+          </FadeIn>
+
+          {/* 3. Opportunity Highlights */}
+          <FadeIn direction="up" delay={300} duration={500}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <OpportunityHighlights />
+              <RelationshipInsights />
+            </div>
+          </FadeIn>
+
+          {/* 4. Market Insights & Updates - Secondary information */}
+          <FadeIn direction="up" delay={400} duration={500}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <TalkingPointsCard />
+              <AnnouncementsCard />
+            </div>
+          </FadeIn>
+
+          {/* 5. Business Snapshot & Performance - Detailed metrics */}
+          <FadeIn direction="up" delay={500} duration={500}>
+            <BusinessSnapshotStructured />
+          </FadeIn>
+
+          <FadeIn direction="up" delay={600} duration={500}>
+            <PerformanceCard />
+          </FadeIn>
         
           {/* Additional spacing for mobile scroll with better padding */}
           <div className="pb-8 sm:pb-12 lg:pb-16"></div>

@@ -1,24 +1,15 @@
 import { cn } from "@/lib/utils";
-import {
-  Home,
-  Users,
-  Clock,
-  BarChart2,
-  Menu,
-} from "lucide-react";
-import primesoftLogo from "../../assets/primesoft-logo.svg";
-import { useEffect, useState } from "react";
-
-const navigationItems = [
-  { name: "Home", href: "/", icon: Home },
-  { name: "Clients", href: "/clients", icon: Users },
-  { name: "Tasks", href: "/tasks", icon: Clock },
-  { name: "Analytics", href: "/analytics", icon: BarChart2 },
-  { name: "More", href: "#", icon: Menu },
-];
+import { primaryMobileShortcuts, findNavigationItem, moreMenuItem } from "@/config/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 export function MobileNav() {
   const [currentPath, setCurrentPath] = useState(window.location.hash.replace(/^#/, '') || '/');
+  const navigationItems = useMemo(() => {
+    const items = primaryMobileShortcuts
+      .map((id) => findNavigationItem(id))
+      .filter((item): item is NonNullable<ReturnType<typeof findNavigationItem>> => Boolean(item));
+    return [...items, moreMenuItem];
+  }, []);
   
   // Update currentPath when hash changes
   useEffect(() => {
@@ -41,11 +32,12 @@ export function MobileNav() {
     <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-background border-t border-border z-10 safe-area-bottom">
       <div className="grid grid-cols-5 h-16">
         {navigationItems.map((item) => {
-          const isActive = item.href === "#" ? false : currentPath === item.href;
+          const isMoreItem = item.id === "more";
+          const isActive = isMoreItem ? false : currentPath === item.href;
           
-          return item.href === "#" ? (
+          return isMoreItem ? (
             <button
-              key={item.name}
+              key={item.id}
               onClick={handleMoreClick}
               className={cn(
                 "flex flex-col items-center justify-center space-y-1 p-1",
@@ -56,11 +48,11 @@ export function MobileNav() {
                 "h-5 w-5 sm:h-6 sm:w-6",
                 isActive ? "text-primary" : "text-muted-foreground"
               )} />
-              <span className="text-[10px] sm:text-xs">{item.name}</span>
+              <span className="text-[10px] sm:text-xs">{item.label}</span>
             </button>
           ) : (
             <a
-              key={item.name}
+              key={item.id}
               href={`#${item.href}`}
               onClick={(e) => {
                 e.preventDefault();
@@ -75,7 +67,7 @@ export function MobileNav() {
                 "h-5 w-5 sm:h-6 sm:w-6",
                 isActive ? "text-primary" : "text-muted-foreground"
               )} />
-              <span className="text-[10px] sm:text-xs">{item.name}</span>
+              <span className="text-[10px] sm:text-xs">{item.label}</span>
             </a>
           );
         })}

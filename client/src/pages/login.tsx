@@ -39,7 +39,11 @@ export default function LoginPage() {
   // Redirect if already authenticated
   useEffect(() => {
     if (user) {
-      window.location.hash = "/";
+      if (user.role === "Question Manager" || user.role === "question_manager") {
+        window.location.hash = "/qm-portal";
+      } else {
+        window.location.hash = "/";
+      }
     }
   }, [user]);
 

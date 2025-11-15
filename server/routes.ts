@@ -17,6 +17,7 @@ import { addClient, updateFinancialProfile, saveClientDraft, getClientDraft } fr
 import * as goalRoutes from "./routes/goals";
 import * as automationRoutes from "./routes/automation";
 import { triggerWebhooks } from "./services/webhook-service";
+import { TaskAlertHubService } from "./services/task-alert-hub-service";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import { z } from "zod";
@@ -2040,6 +2041,233 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Delete portfolio alert error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Task & Alert Hub routes - Unified feed for tasks, alerts, and appointments
+  const taskHubService = new TaskAlertHubService(storage);
+
+  app.get("/api/task-hub/feed", authMiddleware, async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      
+      const filters = {
+        timeframe: req.query.timeframe as 'now' | 'next' | 'scheduled' | 'all' | undefined,
+        clientId: req.query.clientId ? Number(req.query.clientId) : undefined,
+        prospectId: req.query.prospectId ? Number(req.query.prospectId) : undefined,
+        type: req.query.type as 'task' | 'alert' | 'appointment' | 'all' | undefined,
+        status: req.query.status as 'all' | 'pending' | 'completed' | 'dismissed' | undefined
+      };
+
+      // Validate filters
+      if (filters.clientId && isNaN(filters.clientId)) {
+        return res.status(400).json({ message: "Invalid client ID" });
+      }
+      if (filters.prospectId && isNaN(filters.prospectId)) {
+        return res.status(400).json({ message: "Invalid prospect ID" });
+      }
+
+      const feed = await taskHubService.getUnifiedFeed(userId, filters);
+      res.json(feed);
+    } catch (error) {
+      console.error("Get unified feed error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/task-hub/now", authMiddleware, async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      
+      const filters = {
+        clientId: req.query.clientId ? Number(req.query.clientId) : undefined,
+        prospectId: req.query.prospectId ? Number(req.query.prospectId) : undefined,
+        type: req.query.type as 'task' | 'alert' | 'appointment' | 'all' | undefined,
+        status: req.query.status as 'all' | 'pending' | 'completed' | 'dismissed' | undefined
+      };
+
+      const items = await taskHubService.getItemsByTimeframe(userId, 'now', filters);
+      res.json(items);
+    } catch (error) {
+      console.error("Get now items error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/task-hub/next", authMiddleware, async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      
+      const filters = {
+        clientId: req.query.clientId ? Number(req.query.clientId) : undefined,
+        prospectId: req.query.prospectId ? Number(req.query.prospectId) : undefined,
+        type: req.query.type as 'task' | 'alert' | 'appointment' | 'all' | undefined,
+        status: req.query.status as 'all' | 'pending' | 'completed' | 'dismissed' | undefined
+      };
+
+      const items = await taskHubService.getItemsByTimeframe(userId, 'next', filters);
+      res.json(items);
+    } catch (error) {
+      console.error("Get next items error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/task-hub/scheduled", authMiddleware, async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      
+      const filters = {
+        clientId: req.query.clientId ? Number(req.query.clientId) : undefined,
+        prospectId: req.query.prospectId ? Number(req.query.prospectId) : undefined,
+        type: req.query.type as 'task' | 'alert' | 'appointment' | 'all' | undefined,
+        status: req.query.status as 'all' | 'pending' | 'completed' | 'dismissed' | undefined
+      };
+
+      const items = await taskHubService.getItemsByTimeframe(userId, 'scheduled', filters);
+      res.json(items);
+    } catch (error) {
+      console.error("Get scheduled items error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Bulk operations endpoint
+  app.post("/api/task-hub/bulk", authMiddleware, async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      const { itemIds, action } = req.body;
+
+      if (!Array.isArray(itemIds) || itemIds.length === 0) {
+        return res.status(400).json({ 
+          message: "itemIds must be a non-empty array",
+          results: []
+        });
+      }
+
+      if (!action || !['complete', 'dismiss', 'delete', 'reschedule'].includes(action)) {
+        return res.status(400).json({ 
+          message: "action must be one of: complete, dismiss, delete, reschedule",
+          results: []
+        });
+      }
+
+      const results = [];
+
+      for (const itemId of itemIds) {
+        const [type, id] = itemId.split('-');
+        const numericId = Number(id);
+
+        if (isNaN(numericId)) {
+          results.push({ itemId, success: false, error: 'Invalid item ID format' });
+          continue;
+        }
+
+        try {
+          switch (action) {
+            case 'complete':
+              if (type === 'task') {
+                const task = await storage.getTask(numericId);
+                if (!task) {
+                  results.push({ itemId, success: false, error: 'Task not found' });
+                } else if (task.assignedTo !== userId) {
+                  results.push({ itemId, success: false, error: 'Not authorized' });
+                } else {
+                  await storage.updateTask(numericId, { completed: true });
+                  results.push({ itemId, success: true });
+                }
+              } else {
+                results.push({ itemId, success: false, error: 'Complete action only applies to tasks' });
+              }
+              break;
+
+            case 'dismiss':
+              if (type === 'alert') {
+                const alert = await storage.getPortfolioAlert(numericId);
+                if (!alert) {
+                  results.push({ itemId, success: false, error: 'Alert not found' });
+                } else {
+                  await storage.updatePortfolioAlert(numericId, { read: true });
+                  results.push({ itemId, success: true });
+                }
+              } else {
+                results.push({ itemId, success: false, error: 'Dismiss action only applies to alerts' });
+              }
+              break;
+
+            case 'delete':
+              if (type === 'task') {
+                const task = await storage.getTask(numericId);
+                if (!task) {
+                  results.push({ itemId, success: false, error: 'Task not found' });
+                } else if (task.assignedTo !== userId) {
+                  results.push({ itemId, success: false, error: 'Not authorized' });
+                } else {
+                  await storage.deleteTask(numericId);
+                  results.push({ itemId, success: true });
+                }
+              } else if (type === 'alert') {
+                const alert = await storage.getPortfolioAlert(numericId);
+                if (!alert) {
+                  results.push({ itemId, success: false, error: 'Alert not found' });
+                } else {
+                  await storage.deletePortfolioAlert(numericId);
+                  results.push({ itemId, success: true });
+                }
+              } else {
+                results.push({ itemId, success: false, error: 'Delete action only applies to tasks and alerts' });
+              }
+              break;
+
+            case 'reschedule':
+              const rescheduleDate = req.body.rescheduleDate;
+              if (!rescheduleDate) {
+                results.push({ itemId, success: false, error: 'rescheduleDate is required for reschedule action' });
+                break;
+              }
+
+              if (type === 'task') {
+                const task = await storage.getTask(numericId);
+                if (!task) {
+                  results.push({ itemId, success: false, error: 'Task not found' });
+                } else if (task.assignedTo !== userId) {
+                  results.push({ itemId, success: false, error: 'Not authorized' });
+                } else {
+                  await storage.updateTask(numericId, { dueDate: new Date(rescheduleDate) });
+                  results.push({ itemId, success: true });
+                }
+              } else if (type === 'alert') {
+                const alert = await storage.getPortfolioAlert(numericId);
+                if (!alert) {
+                  results.push({ itemId, success: false, error: 'Alert not found' });
+                } else {
+                  await storage.updatePortfolioAlert(numericId, { scheduledFor: new Date(rescheduleDate) });
+                  results.push({ itemId, success: true });
+                }
+              } else {
+                results.push({ itemId, success: false, error: 'Reschedule action only applies to tasks and alerts' });
+              }
+              break;
+          }
+        } catch (error: any) {
+          results.push({ itemId, success: false, error: error.message || 'Operation failed' });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.length - successCount;
+
+      res.json({
+        results,
+        summary: {
+          total: results.length,
+          succeeded: successCount,
+          failed: failCount
+        }
+      });
+    } catch (error) {
+      console.error("Bulk operation error:", error);
+      res.status(500).json({ message: "Internal server error", results: [] });
     }
   });
 
